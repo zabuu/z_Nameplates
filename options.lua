@@ -418,4 +418,360 @@ Z.options = frame
 
 SLASH_ZNAMEPLATES1 = "/znp"
 SLASH_ZNAMEPLATES2 = "/znameplates"
-SlashCmdList["ZNAMEPLATES"] = function() if frame:IsShown() then frame:Hide() else frame:Show() end end
+SlashCmdList["ZNAMEPLATES"] = function(message)
+  local command = string.lower(message or "")
+  command = string.gsub(command, "^%s+", "")
+  command = string.gsub(command, "%s+$", "")
+  if command == "list" then
+    if Z.ToggleCombatList then Z.ToggleCombatList() end
+  elseif frame:IsShown() then
+    frame:Hide()
+  else
+    frame:Show()
+  end
+end
+
+-- Keep the combat-list implementation inside an existing addon file. The
+-- OctoWoW client can reject Lua filenames created after the game started,
+-- even when /reload successfully picks up edits to files it already knows.
+do
+  local listRows = {}
+  local listEntries = {}
+  local listCombatMemory = {}
+  local listActiveGuids = {}
+  local LIST_HEADER_HEIGHT = 24
+  local LIST_PADDING = 8
+
+  local list = CreateFrame("Frame", "zNameplatesCombatList", UIParent)
+  list:SetFrameStrata("MEDIUM")
+  list:SetWidth(170)
+  list:SetHeight(LIST_HEADER_HEIGHT + 24)
+  list:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -32, -180)
+  list:SetMovable(true)
+  list:EnableMouse(true)
+  if list.SetClampedToScreen then list:SetClampedToScreen(true) end
+  list:Hide()
+
+  local listHeader = CreateFrame("Button", nil, list)
+  listHeader:SetPoint("TOPLEFT", list, "TOPLEFT", 2, -2)
+  listHeader:SetPoint("TOPRIGHT", list, "TOPRIGHT", -2, -2)
+  listHeader:SetHeight(LIST_HEADER_HEIGHT - 2)
+  listHeader:RegisterForDrag("LeftButton")
+  listHeader:SetScript("OnDragStart", function() list:StartMoving() end)
+
+  local listTitle = listHeader:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  listTitle:SetPoint("LEFT", listHeader, "LEFT", 8, 0)
+  listTitle:SetJustifyH("LEFT")
+  listTitle:SetTextColor(.2, 1, .8, 1)
+  listTitle:SetText("Combat Plates")
+
+  local listCount = listHeader:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  listCount:SetPoint("LEFT", listTitle, "RIGHT", 5, 0)
+  listCount:SetTextColor(.75, .75, .75, 1)
+  listCount:SetText("(0)")
+
+  local listCollapse = CreateFrame("Button", nil, listHeader)
+  listCollapse:SetPoint("RIGHT", listHeader, "RIGHT", -22, 0)
+  listCollapse:SetWidth(19)
+  listCollapse:SetHeight(18)
+  listCollapse.text = listCollapse:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  listCollapse.text:SetAllPoints(listCollapse)
+  listCollapse.text:SetText("-")
+
+  local listClose = CreateFrame("Button", nil, listHeader)
+  listClose:SetPoint("RIGHT", listHeader, "RIGHT", -3, 0)
+  listClose:SetWidth(18)
+  listClose:SetHeight(18)
+  listClose.text = listClose:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  listClose.text:SetAllPoints(listClose)
+  listClose.text:SetText("x")
+  listClose.text:SetTextColor(.9, .38, .38, 1)
+  listClose:SetScript("OnClick", function() list:Hide() end)
+
+  local listDivider = list:CreateTexture(nil, "ARTWORK")
+  listDivider:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+  listDivider:SetVertexColor(.45, .45, .45, .45)
+  listDivider:SetPoint("TOPLEFT", list, "TOPLEFT", 5, -LIST_HEADER_HEIGHT)
+  listDivider:SetPoint("TOPRIGHT", list, "TOPRIGHT", -5, -LIST_HEADER_HEIGHT)
+  listDivider:SetHeight(1)
+
+  local listEmpty = list:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  listEmpty:SetPoint("TOP", list, "TOP", 0, -LIST_HEADER_HEIGHT - 8)
+  listEmpty:SetText("No enemies in combat")
+
+  local function ListSettings()
+    return Z.config and Z.config.combatlist
+  end
+
+  listHeader:SetScript("OnDragStop", function()
+    list:StopMovingOrSizing()
+    local settings = ListSettings()
+    if not settings or not list.GetPoint then return end
+    local point, _, relativePoint, x, y = list:GetPoint()
+    settings.point = point or "TOPRIGHT"
+    settings.relativePoint = relativePoint or settings.point
+    settings.x = tostring(x or -32)
+    settings.y = tostring(y or -180)
+  end)
+
+  local function ListPlateLevel(plate)
+    local level = plate.unit and UnitLevel and UnitLevel(plate.unit)
+    if level and level > 0 then return level end
+    local label = plate.level and plate.level.GetText and plate.level:GetText()
+    local _, _, number = string.find(label or "", "(%d+)")
+    if number then return tonumber(number) end
+    if level == -1 or (label and string.find(label, "?", 1, true)) then return 999 end
+    return 0
+  end
+
+  local function ListPlateInCombat(plate)
+    local unit = plate and plate.unit
+    if not unit or not UnitExists(unit) or not UnitAffectingCombat("player")
+        or not UnitAffectingCombat(unit) or UnitCanAssist("player", unit)
+        or (UnitIsDead and UnitIsDead(unit)) then
+      if plate and plate.cachedGuid then listCombatMemory[plate.cachedGuid] = nil end
+      return nil
+    end
+
+    local guid = plate.cachedGuid or unit
+    local manager = Z.nameplates
+    if plate.taggedByPlayer or plate.neutralProvoked
+        or (manager and manager.IsCombatWithPlayer and manager.IsCombatWithPlayer(plate)) then
+      listCombatMemory[guid] = true
+    end
+    return listCombatMemory[guid]
+  end
+
+  local function ListCompare(left, right)
+    if left.tagged ~= right.tagged then return left.tagged < right.tagged end
+    if left.level ~= right.level then return left.level > right.level end
+    if left.name ~= right.name then return left.name < right.name end
+    return left.guid < right.guid
+  end
+
+  local function BuildCombatList()
+    for index = table.getn(listEntries), 1, -1 do listEntries[index] = nil end
+    for guid in pairs(listActiveGuids) do listActiveGuids[guid] = nil end
+
+    local visible = Z.nameplates and Z.nameplates.visiblePlates
+    if not visible then return 0 end
+    for base in pairs(visible) do
+      local plate = base and base.nameplate
+      if plate and plate.unit and (not base.IsVisible or base:IsVisible()) then
+        local guid = plate.cachedGuid or plate.unit
+        listActiveGuids[guid] = true
+        if ListPlateInCombat(plate) then
+          local name = plate.name and plate.name.GetText and plate.name:GetText()
+          name = name or (UnitName and UnitName(plate.unit)) or "Unknown"
+          table.insert(listEntries, {
+            plate = plate, guid = tostring(guid), name = string.lower(name),
+            level = ListPlateLevel(plate),
+            tagged = (plate.taggedByPlayer or plate.taggedByOther) and 1 or 0,
+          })
+        end
+      end
+    end
+
+    for guid in pairs(listCombatMemory) do
+      if not listActiveGuids[guid] then listCombatMemory[guid] = nil end
+    end
+    table.sort(listEntries, ListCompare)
+    return table.getn(listEntries)
+  end
+
+  local function SetListFont(text, source, fallbackSize)
+    local font, size, flags
+    if source and source.GetFont then font, size, flags = source:GetFont() end
+    if not font then
+      local useUnit = Z.config.nameplates.use_unitfonts == "1"
+      font = useUnit and Z.font_unit or Z.font_default
+      size = tonumber(useUnit and Z.config.global.font_unit_size or Z.config.global.font_size)
+      flags = Z.config.nameplates.name.fontstyle
+    end
+    if font and font ~= "" then
+      text:SetFont(font, math.max(8, tonumber(size) or fallbackSize or 11), flags or "")
+    end
+  end
+
+  local function SetListTextColor(destination, source, r, g, b, a)
+    if source and source.GetTextColor then
+      local sr, sg, sb, sa = source:GetTextColor()
+      if sr then r, g, b, a = sr, sg, sb, sa end
+    end
+    destination:SetTextColor(r or 1, g or 1, b or 1, a or 1)
+  end
+
+  local function CreateListRow(index)
+    local row = CreateFrame("Button", nil, list)
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    row:SetScript("OnClick", function()
+      if this.unit and UnitExists(this.unit) and TargetUnit then TargetUnit(this.unit) end
+    end)
+
+    row.health = CreateFrame("StatusBar", nil, row)
+    row.health:SetFrameLevel(row:GetFrameLevel() + 1)
+    row.health:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 25, 3)
+    row.health:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -3, 3)
+    Z.CreateBackdrop(row.health, 1)
+
+    row.name = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    row.name:SetPoint("BOTTOMLEFT", row.health, "TOPLEFT", 0, 2)
+    row.name:SetPoint("BOTTOMRIGHT", row.health, "TOPRIGHT", 0, 2)
+    row.name:SetJustifyH("CENTER")
+
+    row.level = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    row.level:SetPoint("RIGHT", row.health, "LEFT", -4, 0)
+    row.level:SetJustifyH("RIGHT")
+
+    row.healthText = row.health:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    row.healthText:SetAllPoints(row.health)
+    row.healthText:SetJustifyH("CENTER")
+    listRows[index] = row
+    return row
+  end
+
+  local function UpdateListRow(row, entry, index, rowHeight, width)
+    local plate, health = entry.plate, entry.plate.health
+    row.unit, row.plate = plate.unit, plate
+    row:SetWidth(width - LIST_PADDING * 2)
+    row:SetHeight(rowHeight)
+    row:ClearAllPoints()
+    row:SetPoint("TOPLEFT", list, "TOPLEFT", LIST_PADDING,
+      -LIST_HEADER_HEIGHT - 4 - (index - 1) * rowHeight)
+
+    row.health:SetHeight(math.max(5, tonumber(Z.config.nameplates.heighthealth) or 8))
+    row.health:SetStatusBarTexture(Z.media[Z.config.nameplates.healthtexture])
+    if health and health.GetMinMaxValues and health.GetValue then
+      local minimum, maximum = health:GetMinMaxValues()
+      if not maximum or maximum <= (minimum or 0) then minimum, maximum = 0, 1 end
+      row.health:SetMinMaxValues(minimum or 0, maximum)
+      row.health:SetValue(health:GetValue() or minimum or 0)
+    else
+      row.health:SetMinMaxValues(0, 1)
+      row.health:SetValue(1)
+    end
+    if health and health.GetStatusBarColor then
+      local r, g, b, a = health:GetStatusBarColor()
+      row.health:SetStatusBarColor(r or .9, g or .2, b or .3, a or 1)
+    end
+
+    if health and health.backdrop and health.backdrop.GetBackdropBorderColor then
+      local r, g, b, a = health.backdrop:GetBackdropBorderColor()
+      row.health.backdrop:SetBackdropBorderColor(r or .2, g or .2, b or .2, a or 1)
+    elseif plate.taggedByPlayer then
+      row.health.backdrop:SetBackdropBorderColor(.35, 1, .05, .75)
+    else
+      row.health.backdrop:SetBackdropBorderColor(Z.GetStringColor(Z.config.appearance.border.color))
+    end
+
+    SetListFont(row.name, plate.name, 11)
+    SetListFont(row.level, plate.level, 10)
+    SetListFont(row.healthText, health and health.text, 9)
+    row.name:SetText(plate.name and plate.name:GetText() or UnitName(plate.unit) or "Unknown")
+    row.level:SetText(plate.level and plate.level:GetText()
+      or (entry.level == 999 and "??" or entry.level))
+    SetListTextColor(row.name, plate.name, 1, 1, 1, 1)
+    SetListTextColor(row.level, plate.level, 1, 1, .2, 1)
+
+    local sourceText = health and health.text
+    local healthText = sourceText and sourceText.GetText and sourceText:GetText()
+    if Z.config.nameplates.showhp == "1" and healthText and healthText ~= "" then
+      row.healthText:SetText(healthText)
+      SetListTextColor(row.healthText, sourceText, 1, 1, 1, 1)
+      row.healthText:Show()
+    else
+      row.healthText:Hide()
+    end
+    row:Show()
+  end
+
+  function list:Refresh()
+    local settings = ListSettings()
+    if not settings then return end
+    local width = math.max(165, math.max(75, tonumber(Z.config.nameplates.width) or 120)
+      + 25 + LIST_PADDING * 2 + 3)
+    local useUnit = Z.config.nameplates.use_unitfonts == "1"
+    local fontSize = tonumber(useUnit and Z.config.global.font_unit_size
+      or Z.config.global.font_size) or 12
+    local rowHeight = fontSize + math.max(5, tonumber(Z.config.nameplates.heighthealth) or 8) + 8
+    local total = BuildCombatList()
+
+    self:SetWidth(width)
+    listCount:SetText("(" .. total .. ")")
+    Z.CreateBackdrop(self, 1)
+
+    if settings.collapsed == "1" then
+      listCollapse.text:SetText("+")
+      listDivider:Hide()
+      listEmpty:Hide()
+      self:SetHeight(LIST_HEADER_HEIGHT + 2)
+      for i = 1, table.getn(listRows) do listRows[i]:Hide() end
+      return
+    end
+
+    listCollapse.text:SetText("-")
+    listDivider:Show()
+    if total == 0 then
+      -- An enabled list always leaves a small movable frame on screen.
+      self:SetHeight(LIST_HEADER_HEIGHT + 24)
+      listEmpty:Show()
+    else
+      self:SetHeight(LIST_HEADER_HEIGHT + 7 + total * rowHeight)
+      listEmpty:Hide()
+    end
+
+    for i = 1, total do
+      UpdateListRow(listRows[i] or CreateListRow(i), listEntries[i], i, rowHeight, width)
+    end
+    for i = total + 1, table.getn(listRows) do listRows[i]:Hide() end
+  end
+
+  listCollapse:SetScript("OnClick", function()
+    local settings = ListSettings()
+    if not settings then return end
+    settings.collapsed = settings.collapsed == "1" and "0" or "1"
+    list:Refresh()
+  end)
+
+  list:SetScript("OnShow", function()
+    local settings = ListSettings()
+    if settings then settings.shown = "1"; list:Refresh() end
+  end)
+  list:SetScript("OnHide", function()
+    local settings = ListSettings()
+    if settings then settings.shown = "0" end
+  end)
+  list:SetScript("OnUpdate", function()
+    local now = GetTime()
+    if (this.lastRefresh or 0) + .12 > now then return end
+    this.lastRefresh = now
+    this:Refresh()
+  end)
+
+  list:RegisterEvent("ADDON_LOADED")
+  list:RegisterEvent("PLAYER_REGEN_DISABLED")
+  list:RegisterEvent("PLAYER_REGEN_ENABLED")
+  list:RegisterEvent("PLAYER_TARGET_CHANGED")
+  pcall(list.RegisterEvent, list, "NAME_PLATE_UNIT_ADDED")
+  pcall(list.RegisterEvent, list, "NAME_PLATE_UNIT_REMOVED")
+  list:SetScript("OnEvent", function()
+    if event == "ADDON_LOADED" then
+      if arg1 ~= "z_Nameplates" then return end
+      this:UnregisterEvent("ADDON_LOADED")
+      local settings = ListSettings()
+      if not settings then return end
+      this:ClearAllPoints()
+      this:SetPoint(settings.point or "TOPRIGHT", UIParent,
+        settings.relativePoint or "TOPRIGHT", tonumber(settings.x) or -32, tonumber(settings.y) or -180)
+      if settings.shown == "1" then this:Show() end
+    elseif event == "PLAYER_REGEN_ENABLED" then
+      for guid in pairs(listCombatMemory) do listCombatMemory[guid] = nil end
+    end
+    if this:IsShown() then this:Refresh() end
+  end)
+
+  function Z.ToggleCombatList()
+    if list:IsShown() then list:Hide() else list:Show() end
+  end
+  Z.combatList = list
+end

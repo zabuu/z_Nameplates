@@ -2111,6 +2111,10 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     end
   end)
 
+  -- The combat-list panel mirrors these existing plate objects and their live
+  -- rendered colours instead of building a second nameplate scanner.
+  nameplates.visiblePlates = visiblePlates
+  nameplates.IsCombatWithPlayer = IsCombatWithPlayer
   zNameplates.nameplates = nameplates
 end
 

@@ -56,6 +56,10 @@ local defaults = {
     nameplates_castbar = "100",
     nameplates_mass = "7",
   },
+  combatlist = {
+    shown = "0", collapsed = "0",
+    point = "TOPRIGHT", relativePoint = "TOPRIGHT", x = "-32", y = "-180",
+  },
   nameplates = {
     showhostile = "1", showfriendly = "0",
     disable_hostile_in_friendly = "0", disable_friendly_in_friendly = "0",
@@ -661,6 +665,7 @@ function Z.Refresh()
   if Z.ApplyBlizzardXPText then Z.ApplyBlizzardXPText() end
   if Z.RefreshQuestIcons then Z.RefreshQuestIcons() end
   if Z.nameplates and Z.nameplates.UpdateConfig then Z.nameplates.UpdateConfig() end
+  if Z.combatList and Z.combatList.Refresh then Z.combatList:Refresh() end
   if Z.options and Z.options.Refresh then Z.options:Refresh() end
 end
 

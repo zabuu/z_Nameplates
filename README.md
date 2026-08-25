@@ -10,6 +10,7 @@ included.
 2. Turn off the pfUI nameplate module if pfUI is enabled. Only one addon should
    own Blizzard nameplates at a time.
 3. Open the settings window with `/znp` or `/znameplates`.
+4. Toggle the movable, collapsible combat-nameplate list with `/znp list`.
 
 The first time zNameplates loads, it imports only relevant nameplate,
 appearance, font, cooldown, and throttle values from an available pfUI saved
