@@ -75,6 +75,24 @@ function zNameplates.StartNameplates()
   local savedFriendlyState = nil
   local inFriendlyZone = false
   local inFriendlyArea = false
+  local neutralFriendlySubzones = {
+    ["gadgetzan"] = true,
+    ["booty bay"] = true,
+    ["everlook"] = true,
+    ["ratchet"] = true,
+    ["steamwheedle port"] = true,
+    ["cenarion hold"] = true,
+    ["light's hope chapel"] = true,
+    ["marshal's refuge"] = true,
+  }
+
+  local function IsPlayerFriendlyArea()
+    local pvpType = GetZonePVPInfo and GetZonePVPInfo()
+    if pvpType == "friendly" or pvpType == "sanctuary" then return true end
+    if IsResting and IsResting() then return true end
+    local subzone = GetSubZoneText and GetSubZoneText()
+    return subzone and neutralFriendlySubzones[strlower(subzone)] or false
+  end
   local myGuild = nil
   local platecount = 0
   local registry = {}
@@ -165,6 +183,22 @@ function zNameplates.StartNameplates()
     cfg.owndebuffs = C.nameplates["owndebuffs"] == "1"
     cfg.targetzoom = C.nameplates.targetzoom == "1"
     cfg.zoomval = (tonumber(C.nameplates.targetzoomval) or 0.4) + 1
+    cfg.distance_scale = C.nameplates.distance_scale == "1"
+    cfg.distance_min_scale = math.max(.20,
+      math.min(1, (tonumber(C.nameplates.distance_min_scale) or 60) / 100))
+    cfg.distance_alpha = C.nameplates.distance_alpha == "1"
+    cfg.distance_min_alpha = math.max(.20,
+      math.min(1, (tonumber(C.nameplates.distance_min_alpha) or 40) / 100))
+    cfg.los_fade = C.nameplates.los_fade == "1"
+    cfg.los_desaturation = math.max(0,
+      math.min(1, (tonumber(C.nameplates.los_desaturation) or 100) / 100))
+    cfg.distance_unitxp = (cfg.distance_scale or cfg.distance_alpha or cfg.los_fade)
+      and type(UnitXP) == "function" or false
+    local foundRange, plateRange = pcall(GetCVar, "NameplateRange")
+    cfg.distance_max_range = foundRange and tonumber(plateRange) or 20
+    if not cfg.distance_max_range or cfg.distance_max_range <= 8 then
+      cfg.distance_max_range = 20
+    end
     cfg.width = tonumber(C.nameplates.width) or 120
     cfg.heighthealth = tonumber(C.nameplates.heighthealth) or 8
     cfg.targetglow = C.nameplates.targetglow == "1"
@@ -304,6 +338,297 @@ function zNameplates.StartNameplates()
     if cfg.overlap_friendly_area and inFriendlyArea then overlap = true end
     if IsCombatWithPlayer(plate) and (cfg.overlap_combat or (plate and plate.isNeutral)) then overlap = false end
     return overlap
+  end
+
+  local function ExactUnitDistance(unit)
+    if not unit then return nil end
+
+    if cfg.distance_unitxp then
+      local found, distance = pcall(UnitXP, "distanceBetween", "player", unit)
+      if found and type(distance) == "number" and distance >= 0 then return distance end
+    end
+
+    if UnitDistanceSquared then
+      local found, squared = pcall(UnitDistanceSquared, unit)
+      if found and type(squared) == "number" and squared >= 0 then
+        return math.sqrt(squared)
+      end
+    end
+
+    if UnitPosition then
+      local foundPlayer, px, py, pz = pcall(UnitPosition, "player")
+      local foundUnit, ux, uy, uz = pcall(UnitPosition, unit)
+      if foundPlayer and foundUnit and px and py and ux and uy then
+        local dx, dy, dz = ux - px, uy - py, (uz or 0) - (pz or 0)
+        return math.sqrt(dx * dx + dy * dy + dz * dz)
+      end
+    end
+  end
+
+  local function SaveVisualColor(object, getter)
+    if not object or not object[getter] then return nil end
+    local r, g, b, a = object[getter](object)
+    if not r then return nil end
+    return { r, g, b, a or 1 }
+  end
+
+  local function RestoreVisualColor(object, setter, color)
+    if object and object[setter] and color then
+      object[setter](object, color[1], color[2], color[3], color[4])
+    end
+  end
+
+  local function GrayVisualColor(object, setter, color, amount)
+    if object and object[setter] and color then
+      local gray = color[1] * .30 + color[2] * .59 + color[3] * .11
+      amount = math.max(0, math.min(1, tonumber(amount) or 1))
+      object[setter](object,
+        color[1] + (gray - color[1]) * amount,
+        color[2] + (gray - color[2]) * amount,
+        color[3] + (gray - color[3]) * amount,
+        color[4])
+    end
+  end
+
+  local function DesaturateTexture(texture, desaturated)
+    if texture and texture.SetDesaturated then
+      pcall(texture.SetDesaturated, texture, desaturated and true or false)
+    end
+  end
+
+  local function SetLineOfSightDesaturation(plate, outOfSight, force)
+    local changed = (plate.losDesaturated and true or false) ~= (outOfSight and true or false)
+    if outOfSight and not plate.losVisualColors then
+      plate.losVisualColors = {
+        health = SaveVisualColor(plate.health, "GetStatusBarColor"),
+        healthBorder = plate.health and SaveVisualColor(plate.health.backdrop, "GetBackdropBorderColor"),
+        castbar = SaveVisualColor(plate.castbar, "GetStatusBarColor"),
+        castBorder = plate.castbar and SaveVisualColor(plate.castbar.backdrop, "GetBackdropBorderColor"),
+        name = SaveVisualColor(plate.name, "GetTextColor"),
+        level = SaveVisualColor(plate.level, "GetTextColor"),
+        guild = SaveVisualColor(plate.guild, "GetTextColor"),
+        healthText = plate.health and SaveVisualColor(plate.health.text, "GetTextColor"),
+        castText = plate.castbar and SaveVisualColor(plate.castbar.text, "GetTextColor"),
+        spell = plate.castbar and SaveVisualColor(plate.castbar.spell, "GetTextColor"),
+        quest = SaveVisualColor(plate.questIcon, "GetTextColor"),
+      }
+    end
+
+    local colors = plate.losVisualColors
+    if outOfSight and colors and (changed or force) then
+      local amount = cfg.los_desaturation
+      GrayVisualColor(plate.health, "SetStatusBarColor", colors.health, amount)
+      if plate.health then
+        GrayVisualColor(plate.health.backdrop, "SetBackdropBorderColor", colors.healthBorder, amount)
+      end
+      GrayVisualColor(plate.castbar, "SetStatusBarColor", colors.castbar, amount)
+      if plate.castbar then
+        GrayVisualColor(plate.castbar.backdrop, "SetBackdropBorderColor", colors.castBorder, amount)
+      end
+      GrayVisualColor(plate.name, "SetTextColor", colors.name, amount)
+      GrayVisualColor(plate.level, "SetTextColor", colors.level, amount)
+      GrayVisualColor(plate.guild, "SetTextColor", colors.guild, amount)
+      if plate.health then GrayVisualColor(plate.health.text, "SetTextColor", colors.healthText, amount) end
+      if plate.castbar then
+        GrayVisualColor(plate.castbar.text, "SetTextColor", colors.castText, amount)
+        GrayVisualColor(plate.castbar.spell, "SetTextColor", colors.spell, amount)
+      end
+      GrayVisualColor(plate.questIcon, "SetTextColor", colors.quest, amount)
+    elseif colors then
+      RestoreVisualColor(plate.health, "SetStatusBarColor", colors.health)
+      if plate.health then
+        RestoreVisualColor(plate.health.backdrop, "SetBackdropBorderColor", colors.healthBorder)
+      end
+      RestoreVisualColor(plate.castbar, "SetStatusBarColor", colors.castbar)
+      if plate.castbar then
+        RestoreVisualColor(plate.castbar.backdrop, "SetBackdropBorderColor", colors.castBorder)
+      end
+      RestoreVisualColor(plate.name, "SetTextColor", colors.name)
+      RestoreVisualColor(plate.level, "SetTextColor", colors.level)
+      RestoreVisualColor(plate.guild, "SetTextColor", colors.guild)
+      if plate.health then RestoreVisualColor(plate.health.text, "SetTextColor", colors.healthText) end
+      if plate.castbar then
+        RestoreVisualColor(plate.castbar.text, "SetTextColor", colors.castText)
+        RestoreVisualColor(plate.castbar.spell, "SetTextColor", colors.spell)
+      end
+      RestoreVisualColor(plate.questIcon, "SetTextColor", colors.quest)
+      plate.losVisualColors = nil
+      plate.eventcache = true
+    end
+
+    local textureDesaturated = outOfSight and cfg.los_desaturation >= .995 or false
+    if changed or plate.losTextureDesaturated ~= textureDesaturated then
+      local healthTexture = plate.health and plate.health.GetStatusBarTexture
+        and plate.health:GetStatusBarTexture()
+      local castTexture = plate.castbar and plate.castbar.GetStatusBarTexture
+        and plate.castbar:GetStatusBarTexture()
+      DesaturateTexture(healthTexture, textureDesaturated)
+      DesaturateTexture(castTexture, textureDesaturated)
+      DesaturateTexture(plate.glow, textureDesaturated)
+      DesaturateTexture(plate.raidicon, textureDesaturated)
+      DesaturateTexture(plate.totem and plate.totem.icon, textureDesaturated)
+      DesaturateTexture(plate.castbar and plate.castbar.icon and plate.castbar.icon.tex, textureDesaturated)
+      for index = 1, 16 do
+        DesaturateTexture(plate.debuffs and plate.debuffs[index]
+          and plate.debuffs[index].icon, textureDesaturated)
+      end
+      for index = 1, 5 do
+        DesaturateTexture(plate.combopoints and plate.combopoints[index]
+          and plate.combopoints[index].tex, textureDesaturated)
+      end
+      plate.losTextureDesaturated = textureDesaturated
+    end
+    plate.losDesaturated = outOfSight and true or nil
+  end
+
+  local function ApplyDistanceEffects(plate, now, baseAlpha)
+    local baseScale = UIParent:GetScale()
+    now = now or GetTime()
+    local identity = plate.cachedGuid or plate.unit
+    if plate.distanceScaleIdentity ~= identity then
+      plate.distanceScaleIdentity = identity
+      plate.distanceTargetScale = nil
+      plate.distanceNextSample = nil
+      plate.distanceProgress = nil
+      plate.distanceVisualTime = nil
+      plate.distanceAlpha = nil
+      plate.losAlpha = nil
+      plate.losNextSample = nil
+      plate.losOutOfSight = nil
+    end
+
+    local elapsed = plate.distanceVisualTime
+      and math.max(0, math.min(.1, now - plate.distanceVisualTime)) or nil
+    local blend = elapsed and 1 - math.exp(-elapsed * 10) or 1
+    plate.distanceVisualTime = now
+
+    if cfg.distance_scale or cfg.distance_alpha then
+      -- Sample exact range at the same cadence as the central visual loop. The
+      -- eased frame scale then supplies many small transitions between glyph
+      -- sizes instead of visibly stepping between a few coarse values.
+      if not plate.distanceNextSample or now >= plate.distanceNextSample then
+        local progress = 0
+        local distance = ExactUnitDistance(plate.unit)
+        if distance and distance > 8 then
+          progress = math.min(1, (distance - 8) / (cfg.distance_max_range - 8))
+        end
+        plate.distanceProgress = progress
+        plate.distanceNextSample = now + .01
+      end
+    else
+      plate.distanceProgress = 0
+      plate.distanceNextSample = nil
+    end
+
+    local progress = plate.distanceProgress or 0
+    local targetScale = baseScale
+    if cfg.distance_scale then
+      targetScale = targetScale * (1 - (1 - cfg.distance_min_scale) * progress)
+    end
+    plate.distanceTargetScale = targetScale
+
+    local scale = plate.distanceScale or baseScale
+    scale = scale + (targetScale - scale) * blend
+    if abs(targetScale - scale) < .00001 then scale = targetScale end
+    if not plate.distanceScale or abs(plate.distanceScale - scale) > .000001 then
+      plate:SetScale(scale)
+      plate.distanceScale = scale
+      plate.dwidth = nil
+    end
+
+    local targetDistanceAlpha = cfg.distance_alpha
+      and 1 - (1 - cfg.distance_min_alpha) * progress or 1
+    local distanceAlpha = plate.distanceAlpha or 1
+    distanceAlpha = distanceAlpha + (targetDistanceAlpha - distanceAlpha) * blend
+    if abs(targetDistanceAlpha - distanceAlpha) < .0001 then distanceAlpha = targetDistanceAlpha end
+    plate.distanceAlpha = distanceAlpha
+
+    if cfg.los_fade and cfg.distance_unitxp and plate.unit and UnitExists(plate.unit) then
+      if not plate.losNextSample or now >= plate.losNextSample then
+        local found, inSight = pcall(UnitXP, "inSight", "player", plate.unit)
+        plate.losOutOfSight = found and inSight == false or nil
+        plate.losNextSample = now + .1
+      end
+    else
+      plate.losOutOfSight = nil
+      plate.losNextSample = nil
+    end
+    SetLineOfSightDesaturation(plate, plate.losOutOfSight)
+
+    local targetLosAlpha = plate.losOutOfSight and cfg.distance_min_alpha or 1
+    local losAlpha = plate.losAlpha or 1
+    losAlpha = losAlpha + (targetLosAlpha - losAlpha) * blend
+    if abs(targetLosAlpha - losAlpha) < .0001 then losAlpha = targetLosAlpha end
+    plate.losAlpha = losAlpha
+
+    -- Distance and line-of-sight select the stronger fade. They never multiply,
+    -- so a far, obstructed plate bottoms out at the configured minimum once.
+    local visualAlpha = math.min(distanceAlpha, losAlpha)
+    local desiredAlpha = math.max(0, math.min(1, (baseAlpha or 1) * visualAlpha))
+    if not plate.cachedAlpha or abs(plate.cachedAlpha - desiredAlpha) > .0005 then
+      plate:SetAlpha(desiredAlpha)
+      plate.cachedAlpha = desiredAlpha
+    end
+  end
+
+  local function RefreshVisibleNameplatePool()
+    local hostileEnabled = C.nameplates.showhostile == "1"
+      and not (inFriendlyArea and C.nameplates.disable_hostile_in_friendly == "1")
+    local friendlyEnabled = C.nameplates.showfriendly == "1"
+      and not (inFriendlyArea and C.nameplates.disable_friendly_in_friendly == "1")
+
+    -- Both halves happen in one rendered frame. This rebuilds the client's
+    -- pooled nameplates after the player's pet appears without changing the
+    -- player's configured visibility state.
+    if hostileEnabled then
+      _G.NAMEPLATES_ON = nil
+      HideNameplates()
+      _G.NAMEPLATES_ON = true
+      ShowNameplates()
+    end
+    if friendlyEnabled then
+      _G.FRIENDNAMEPLATES_ON = nil
+      HideFriendNameplates()
+      _G.FRIENDNAMEPLATES_ON = true
+      ShowFriendNameplates()
+    end
+  end
+
+  local function ReleaseAtScreenEdge(frame, plate, overlap)
+    if frame.SetClampedToScreen then
+      if not overlap and not plate.screenUnclamped then
+        if frame.IsClampedToScreen then
+          local found, clamped = pcall(frame.IsClampedToScreen, frame)
+          if found then plate.originalScreenClamp = clamped end
+        end
+        pcall(frame.SetClampedToScreen, frame, false)
+        if plate.SetClampedToScreen then pcall(plate.SetClampedToScreen, plate, false) end
+        plate.screenUnclamped = true
+      elseif overlap and plate.screenUnclamped then
+        if plate.originalScreenClamp ~= nil then
+          pcall(frame.SetClampedToScreen, frame, plate.originalScreenClamp)
+        end
+        plate.screenUnclamped = nil
+        plate.originalScreenClamp = nil
+      end
+    end
+
+    if overlap or not frame.GetCenter or not UIParent.GetWidth or not UIParent.GetHeight then
+      return false
+    end
+    local x, y = frame:GetCenter()
+    if not x or not y then return false end
+
+    local parentScale = UIParent.GetEffectiveScale and UIParent:GetEffectiveScale() or 1
+    if parentScale <= 0 then parentScale = 1 end
+    local frameScale = frame.GetEffectiveScale and frame:GetEffectiveScale() or 1
+    local plateScale = plate.GetEffectiveScale and plate:GetEffectiveScale() or frameScale
+    x, y = x * frameScale / parentScale, y * frameScale / parentScale
+    local halfWidth = plate:GetWidth() * plateScale / parentScale / 2
+    local halfHeight = plate:GetHeight() * plateScale / parentScale / 2
+
+    return x <= halfWidth + 1 or x >= UIParent:GetWidth() - halfWidth - 1
+      or y <= halfHeight + 1 or y >= UIParent:GetHeight() - halfHeight - 1
   end
 
   local function DoNothing()
@@ -529,11 +854,17 @@ function zNameplates.StartNameplates()
   -- create nameplate core
 local nameplates = CreateFrame("Frame", "zNameplatesFrame", UIParent)
 nameplates:RegisterEvent("PLAYER_ENTERING_WORLD")
+pcall(nameplates.RegisterEvent, nameplates, "PLAYER_ALIVE")
+pcall(nameplates.RegisterEvent, nameplates, "UNIT_PET")
+pcall(nameplates.RegisterEvent, nameplates, "PET_BAR_UPDATE")
 nameplates:RegisterEvent("PLAYER_TARGET_CHANGED")
 nameplates:RegisterEvent("PLAYER_LOGOUT")
 nameplates:RegisterEvent("UNIT_COMBO_POINTS")
 nameplates:RegisterEvent("PLAYER_COMBO_POINTS")
 nameplates:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+pcall(nameplates.RegisterEvent, nameplates, "ZONE_CHANGED")
+pcall(nameplates.RegisterEvent, nameplates, "ZONE_CHANGED_INDOORS")
+pcall(nameplates.RegisterEvent, nameplates, "PLAYER_UPDATE_RESTING")
 nameplates:RegisterEvent("RAID_ROSTER_UPDATE")
 nameplates:RegisterEvent("PARTY_MEMBERS_CHANGED")
 nameplates:RegisterEvent("NAME_PLATE_CREATED")
@@ -563,19 +894,29 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     elseif event == "PLAYER_GUILD_UPDATE" and arg1 == 'player' then
       myGuild = GetGuildInfo("player")
 
-    elseif event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
+    elseif event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA"
+      or event == "ZONE_CHANGED" or event == "ZONE_CHANGED_INDOORS"
+      or event == "PLAYER_UPDATE_RESTING" then
       if event == "PLAYER_ENTERING_WORLD" then
         CacheConfig()
         this:SetGameVariables()
         RebuildRaidGuidCache()
         frameState.targetGuid = UnitGUID("target")
         myGuild = GetGuildInfo("player")
+        -- Establish a fresh baseline after a loading screen. Pet unit tokens
+        -- are commonly recreated here; that is not a new summon and must not
+        -- cause the nameplates to flicker as the zone finishes loading.
+        this.playerPetPresent = UnitExists("pet") and true or false
+        this.petRefreshSuppressedUntil = GetTime() + 3
+        this.petTransitionCheckAt = nil
+        this.petTransitionCheckUntil = nil
+        this.visibilityRefreshAt = nil
       end
       
       -- Handle friendly zone nameplate disable feature
       local disableHostile = C.nameplates["disable_hostile_in_friendly"] == "1"
       local disableFriendly = C.nameplates["disable_friendly_in_friendly"] == "1"
-      local nowFriendly = GetZonePVPInfo() == "friendly"
+      local nowFriendly = IsPlayerFriendlyArea()
       inFriendlyArea = nowFriendly
       
       if disableHostile or disableFriendly then
@@ -613,6 +954,18 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         end
       end
 
+    elseif event == "PLAYER_ALIVE" then
+      this.eventcache = true
+
+    elseif event == "UNIT_PET" or event == "PET_BAR_UPDATE" then
+      if event ~= "UNIT_PET" or not arg1 or arg1 == "player" then
+        -- UNIT_PET can precede the pet token becoming readable. Poll briefly,
+        -- then refresh a little after the false -> true transition.
+        local now = GetTime()
+        this.petTransitionCheckAt = now + .05
+        this.petTransitionCheckUntil = now + 1
+      end
+
     elseif event == "RAID_ROSTER_UPDATE" or event == "PARTY_MEMBERS_CHANGED" then
       RebuildRaidGuidCache()
 
@@ -628,6 +981,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
       -- token itself for token-based UnitX reads (stable per plate lifetime).
       local plate = C_NamePlate.GetNamePlateForUnit(arg1)
       if plate and plate.nameplate then
+        SetLineOfSightDesaturation(plate.nameplate, nil)
         local wasVisible = visiblePlates[plate]
         visiblePlates[plate] = plate
         plateByUnit[arg1] = plate
@@ -647,6 +1001,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         plate.nameplate.creatureType = nil  -- recompute for the new unit
         plate.nameplate.totemIcon = nil
         plate.nameplate.questIconRevision = nil
+        plate.nameplate.cachedAlpha = nil
         if plate.nameplate.questIcon then plate.nameplate.questIcon:Hide() end
         if guid then
           plateByGuid[guid] = plate.nameplate
@@ -678,6 +1033,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         if plateByGuid[guid] then plateByGuid[guid] = nil end
       end
       if plate and plate.nameplate then
+        SetLineOfSightDesaturation(plate.nameplate, nil)
         if plate.nameplate.questIcon then plate.nameplate.questIcon:Hide() end
         plate.nameplate.questIconRevision = nil
         plate.nameplate.cachedGuid = nil
@@ -791,6 +1147,27 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
 
     -- PERF: Cache GetTime() once per frame
     frameState.now = now
+
+    if this.petTransitionCheckAt and now >= this.petTransitionCheckAt then
+      local petPresent = UnitExists("pet") and true or false
+      if petPresent ~= this.playerPetPresent then
+        this.playerPetPresent = petPresent
+        if petPresent and now >= (this.petRefreshSuppressedUntil or 0) then
+          this.visibilityRefreshAt = now + .2
+        end
+      end
+      if petPresent or now >= (this.petTransitionCheckUntil or 0) then
+        this.petTransitionCheckAt = nil
+        this.petTransitionCheckUntil = nil
+      else
+        this.petTransitionCheckAt = now + .05
+      end
+    end
+
+    if this.visibilityRefreshAt and now >= this.visibilityRefreshAt then
+      this.visibilityRefreshAt = nil
+      RefreshVisibleNameplatePool()
+    end
 
     if this.eventcache then
       this.eventcache = nil
@@ -1049,7 +1426,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     nameplate:SetSize(plate_width, plate_height)
     nameplate:SetPoint("TOP", parent, "TOP", 0, 0)
 
-    nameplate.name:SetFont(font, font_size, font_style)
+    zNameplates.SetSmoothFontString(nameplate.name, font, font_size, font_style)
     if zNameplates.ConfigureQuestIcon then zNameplates.ConfigureQuestIcon(nameplate, font) end
     local nameTextPos = C.nameplates.nametextpos or "CENTER"
     local nameAnchor = nameTextPos == "RIGHT" and { "BOTTOMRIGHT", "TOPRIGHT" }
@@ -1074,14 +1451,14 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     nameplate.health.text:SetFont(font, font_size - 2, "OUTLINE")
     nameplate.health.text:SetJustifyH(C.nameplates.hptextpos)
 
-    nameplate.guild:SetFont(font, font_size, font_style)
+    zNameplates.SetSmoothFontString(nameplate.guild, font, font_size, font_style)
 
     nameplate.glow:SetSize(C.nameplates.width + 60, C.nameplates.heighthealth + 30)
     nameplate.glow:SetVertexColor(glowr, glowg, glowb, glowa)
 
     nameplate.raidicon:ClearAllPoints()
     nameplate.raidicon:SetPoint("BOTTOM", nameplate.health, "TOP", C.nameplates.raidiconoffx, C.nameplates.raidiconoffy)
-    nameplate.level:SetFont(font, font_size, font_style)
+    zNameplates.SetSmoothFontString(nameplate.level, font, font_size, font_style)
     nameplate.raidicon:SetSize(C.nameplates.raidiconsize, C.nameplates.raidiconsize)
 
     for i=1,16 do
@@ -1329,7 +1706,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     plate.cache.levelfromdb = levelFromDB or nil
 
     if guild and C.nameplates.showguildname == "1" then
-      plate.guild:SetText(guild)
+      plate.guild:SetText(plate.cache.player and ("<" .. guild .. ">") or guild)
       if guild == myGuild then
         plate.guild:SetTextColor(0, 0.9, 0, 1)
       else
@@ -1587,6 +1964,13 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     local targetGuid = state and state.targetGuid
     local target = (targetGuid and nameplate.cachedGuid and targetGuid == nameplate.cachedGuid) or
                    (state and state.targetGuid and frame:GetAlpha() >= 0.99) or nil
+    local configAlpha = cfg.notargalpha or 0.5
+    local baseAlpha = (target or not targetGuid) and 1 or configAlpha
+
+    -- Size, opacity, and line-of-sight transitions run at the fast central
+    -- cadence so movement remains continuous even when normal plate data is
+    -- using the lower non-target update rate.
+    ApplyDistanceEffects(nameplate, now, baseAlpha)
     -- Target plate castbar runs on its own dedicated frame (nameplates.castbarFrame).
     -- For non-target plates with castbar active, use castbar throttle to ensure
     -- smooth animation without overloading the central loop.
@@ -1653,7 +2037,9 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     -- OVERLAP/CLICKTHROUGH HANDLING
     -- =========================================================================
     local overlapEnabled = ShouldOverlap(nameplate)
-    local useOverlap = overlapEnabled or C.nameplates["vertical_offset"] ~= "0"
+    local edgeReleased = ReleaseAtScreenEdge(frame, nameplate, overlapEnabled)
+    local collisionReleased = overlapEnabled or edgeReleased
+    local useOverlap = collisionReleased or C.nameplates["vertical_offset"] ~= "0"
     local clickable = C.nameplates["clickthrough"] ~= "1"
 
     if not clickable then
@@ -1667,24 +2053,24 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
       nameplate:EnableMouse(false)
     end
 
-    if overlapEnabled then
+    if collisionReleased then
       if frame:GetWidth() > 1 then
         frame:SetSize(1, 1)
       end
     else
       if not nameplate.dwidth then
-        nameplate.dwidth = floor(nameplate:GetWidth() * UIParent:GetScale())
+        nameplate.dwidth = floor(nameplate:GetWidth() * nameplate:GetScale())
       end
 
       if floor(frame:GetWidth()) ~= nameplate.dwidth then
         local nameW, nameH = nameplate:GetSize()
-        local uiScale = UIParent:GetScale()
-        frame:SetSize(nameW * uiScale, nameH * uiScale)
+        local plateScale = nameplate:GetScale()
+        frame:SetSize(nameW * plateScale, nameH * plateScale)
       end
     end
 
     local mouseEnabled = nameplate:IsMouseEnabled()
-    if C.nameplates["clickthrough"] == "0" and overlapEnabled and SpellIsTargeting() == mouseEnabled then
+    if C.nameplates["clickthrough"] == "0" and collisionReleased and SpellIsTargeting() == mouseEnabled then
       nameplate:EnableMouse(not mouseEnabled)
     end
 
@@ -1702,15 +2088,6 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     end
 
     nameplate.istarget = target
-
-    -- Set non-target plate alpha
-    local configAlpha = cfg.notargalpha or 0.5
-    local desiredAlpha = (target or not state.targetGuid) and 1 or configAlpha
-
-    if nameplate.cachedAlpha ~= desiredAlpha then
-      nameplate:SetAlpha(desiredAlpha)
-      nameplate.cachedAlpha = desiredAlpha
-    end
 
     -- queue update on visual target update
     if nameplate.cache.target ~= target then
@@ -1962,8 +2339,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     -- Check friendly zone state when config changes
     local disableHostile = C.nameplates["disable_hostile_in_friendly"] == "1"
     local disableFriendly = C.nameplates["disable_friendly_in_friendly"] == "1"
-    local pvpType = GetZonePVPInfo()
-    local nowFriendly = (pvpType == "friendly")
+    local nowFriendly = IsPlayerFriendlyArea()
     inFriendlyArea = nowFriendly
     
     if nowFriendly and (disableHostile or disableFriendly) then
@@ -2064,6 +2440,12 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
   local hookOnDataChanged = nameplates.OnDataChanged
   nameplates.OnDataChanged = function(self, nameplate)
     hookOnDataChanged(self, nameplate)
+
+    -- The normal data pass restores live reaction/threat colours. Reapply the
+    -- grayscale treatment once after that pass while the unit remains blocked.
+    if nameplate.losOutOfSight then
+      SetLineOfSightDesaturation(nameplate, true, true)
+    end
 
     -- Keep mouse ownership on the correct frame when a pooled nameplate changes
     -- between friendly and non-friendly units.

@@ -19,24 +19,24 @@ end
 
 local defaults = {
   global = {
-    font_default = PATH .. "\\Assets\\fonts\\Myriad-Pro.ttf",
-    font_unit = PATH .. "\\Assets\\fonts\\BigNoodleTitling.ttf",
-    font_size = "12",
-    font_unit_size = "12",
+    font_default = PATH .. "\\Assets\\fonts\\Expressway.ttf",
+    font_unit = PATH .. "\\Assets\\fonts\\Expressway.ttf",
+    font_size = "10",
+    font_unit_size = "10",
   },
   appearance = {
     border = {
-      background = "0,0,0,1",
-      color = "0.2,0.2,0.2,1",
+      background = "0.1,0.1,0.1,0.8",
+      color = "0,0,0,1",
       pixelperfect = "1",
       hidpi = "1",
-      default = "3",
+      default = "1",
       nameplates = "-1",
     },
     castbar = {
       castbarcolor = ".7,.7,.9,.8",
       channelcolor = ".9,.9,.7,.8",
-      texture = PATH .. "\\Assets\\img\\bar.tga",
+      texture = PATH .. "\\Assets\\img\\bar",
     },
     cd = {
       font = PATH .. "\\Assets\\fonts\\BigNoodleTitling.ttf",
@@ -57,25 +57,29 @@ local defaults = {
     nameplates_mass = "7",
   },
   combatlist = {
-    shown = "0", collapsed = "0",
-    point = "TOPRIGHT", relativePoint = "TOPRIGHT", x = "-32", y = "-180",
+    shown = "1", collapsed = "1",
+    point = "TOPLEFT", relativePoint = "TOPLEFT",
+    x = "1223.77657471", y = "-4.8518200319566",
   },
   nameplates = {
-    showhostile = "1", showfriendly = "0",
+    showhostile = "1", showfriendly = "1",
     disable_hostile_in_friendly = "0", disable_friendly_in_friendly = "0",
-    use_unitfonts = "0", overlap_enemy = "0", overlap_friendly = "0",
-    overlap_friendly_area = "0", overlap_combat = "0",
+    use_unitfonts = "1", overlap_enemy = "0", overlap_friendly = "1",
+    overlap_friendly_area = "1", overlap_combat = "1",
+    distance_scale = "1", distance_min_scale = "58",
+    distance_alpha = "1", distance_min_alpha = "37", los_fade = "1",
+    los_desaturation = "27",
     verticalhealth = "0", vertical_offset = "0",
     showcastbar = "1", targetcastbar = "0", spellname = "0",
     showdebuffs = "1", showdebuffs_hostile = "1", showdebuffs_friendly = "0",
-    owndebuffs = "0", clickthrough = "0", rightclick = "1", clickthreshold = "0.5",
-    enemyclassc = "1", friendclassc = "1", friendclassnamec = "0",
+    owndebuffs = "0", clickthrough = "1", rightclick = "1", clickthreshold = "0.5",
+    enemyclassc = "1", friendclassc = "1", friendclassnamec = "1",
     raidiconsize = "16", raidiconpos = "CENTER", raidiconoffx = "0", raidiconoffy = "-5",
     questicons = "1", questiconsize = "26", questiconoffset = "0",
-    fullhealth = "1", target = "1", namefightcolor = "1",
+    fullhealth = "0", target = "0", namefightcolor = "1",
     enemynpc = "0", enemyplayer = "0", neutralnpc = "0",
-    friendlynpc = "0", friendlyplayer = "0", critters = "1", totems = "1",
-    totemicons = "0", showguildname = "0",
+    friendlynpc = "1", friendlyplayer = "1", critters = "1", totems = "1",
+    totemicons = "1", showguildname = "1",
     outcombatstate = "1", barcombatstate = "1",
     ccombatthreat = "1", ccombatofftank = "1", ccombatnothreat = "1",
     ccombatstun = "1", ccombatcasting = "0",
@@ -84,15 +88,15 @@ local defaults = {
     combatcasting = ".7,.2,.7,1", combatofftanks = "",
     outfriendly = "0", outfriendlynpc = "1", outneutral = "1", outenemy = "1",
     targethighlight = "0", highlightcolor = "1,1,1,1",
-    hide_blizzard_xp = "0",
+    hide_blizzard_xp = "1",
     enemynamecolor = "1,1,1,1", friendlynamecolor = ".2,1,.2,1",
     critternamecolor = "1,1,1,.35",
-    showhp = "0", hptextpos = "RIGHT", nametextpos = "CENTER",
+    showhp = "1", hptextpos = "RIGHT", nametextpos = "CENTER",
     hptextformat = "curmaxs", width = "120", debuffsize = "14", debuffoffset = "4",
     heighthealth = "8", heightcast = "8", cpdisplay = "0",
-    targetglow = "1", glowcolor = "1,1,1,1", targetzoom = "0",
+    targetglow = "1", glowcolor = "0.361,0.004,0,0.35", targetzoom = "0",
     targetzoomval = ".40", notargalpha = ".75",
-    healthtexture = PATH .. "\\Assets\\img\\bar.tga",
+    healthtexture = PATH .. "\\Assets\\img\\bar",
     name = { fontstyle = "OUTLINE" },
     health = { offset = "-3" },
     debuffs = {
@@ -266,6 +270,20 @@ function Z.CreateBackdrop(frame, inset)
   frame.backdrop:SetBackdropBorderColor(Z.GetStringColor(Z.config.appearance.border.color))
 end
 
+-- Render plate labels from a larger glyph surface, then resolve them back to
+-- their configured height. This gives the parent frame's continuous distance
+-- scale substantially more intermediate-looking text sizes on the old client.
+function Z.SetSmoothFontString(text, font, size, flags)
+  if not text or not font then return end
+  size = math.max(1, tonumber(size) or 12)
+  if text.SetTextHeight then
+    text:SetFont(font, size * 2, flags or "")
+    text:SetTextHeight(size)
+  else
+    text:SetFont(font, size, flags or "")
+  end
+end
+
 Z.throttle = {}
 function Z.throttle:Get(category)
   local fps = tonumber(Z.config.throttle[category]) or 10
@@ -402,20 +420,26 @@ end
 -- Keep quest markers inside the already-loaded core chunk. Some 1.12 clients
 -- reject an additional standalone quest file before its functions are defined.
 local questMarkerState = {
-  byNPC = {}, byGUID = {}, byName = {}, titles = {}, repeatable = {}, revision = 0,
-  INCOMPLETE = { text = "?", r = .56, g = .56, b = .56, priority = 1 },
-  REPEATABLE = { text = "?", r = .20, g = .65, b = 1, priority = 2 },
+  byNPC = {}, byGUID = {}, byName = {}, titles = {}, activeQuestIDs = {},
+  repeatable = {}, repeatableQuests = {}, repeatableTitles = {}, revision = 0,
+  REPEATABLE = { text = "?", r = .20, g = .65, b = 1, priority = 1 },
+  INCOMPLETE = { text = "?", r = .56, g = .56, b = .56, priority = 2 },
   AVAILABLE = { text = "!", r = 1, g = .82, b = .05, priority = 3 },
   COMPLETE = { text = "?", r = 1, g = .82, b = .05, priority = 4 },
 }
 
+local function BestQuestMarker(current, candidate)
+  if not candidate or not questMarkerState[candidate] then return current end
+  if not current or questMarkerState[candidate].priority > questMarkerState[current].priority then
+    return candidate
+  end
+  return current
+end
+
 local function AddQuestMarker(npcID, status)
   npcID = tonumber(npcID)
   if not npcID or not questMarkerState[status] then return end
-  local previous = questMarkerState.byNPC[npcID]
-  if not previous or questMarkerState[status].priority > questMarkerState[previous].priority then
-    questMarkerState.byNPC[npcID] = status
-  end
+  questMarkerState.byNPC[npcID] = BestQuestMarker(questMarkerState.byNPC[npcID], status)
 end
 
 local function QuestNPCID(unit, guid)
@@ -441,9 +465,76 @@ local function IsRepeatableQuestMarker(data)
   end
 end
 
+local function QuestMarkerTitle(questID, data)
+  local localization = pfDB and pfDB.quests and pfDB.quests.loc
+  local localized = localization and localization[tonumber(questID)]
+  return localized and localized.T or data and (data.title or data.Title or data.T or data.name)
+end
+
+local function QuestMarkerRepeatable(questID, title, data)
+  return IsRepeatableQuestMarker(data)
+    or questID and questMarkerState.repeatableQuests[tonumber(questID)]
+    or title and questMarkerState.repeatableTitles[title]
+end
+
+local function QuestMarkerAvailable(questID, data, title)
+  questID = tonumber(questID)
+  title = title or QuestMarkerTitle(questID, data)
+  if questID and (questMarkerState.activeQuestIDs[questID]
+    or pfQuest and pfQuest.questlog and (pfQuest.questlog[questID] or pfQuest.questlog[tostring(questID)])) then
+    return nil
+  end
+  if title and questMarkerState.titles[title] then return nil end
+  if data and (data.isAvailable == false or data.available == false or data.isOnQuest) then return nil end
+
+  local minimum = data and tonumber(data.min or data.minLevel or data.minimumLevel
+    or data.minRequiredLevel or data.requiredLevel)
+  local playerLevel = UnitLevel and tonumber(UnitLevel("player"))
+  if minimum and playerLevel and minimum > playerLevel then return nil end
+  if questID and pfQuest_history and pfQuest_history[questID]
+    and not QuestMarkerRepeatable(questID, title, data) then
+    return nil
+  end
+  if data and data.pre and pfQuest_history then
+    local completed
+    for _, prerequisite in pairs(data.pre) do
+      if pfQuest_history[prerequisite] then completed = true; break end
+    end
+    if not completed then return nil end
+  end
+  return true
+end
+
+local function AddActiveQuestMarkers(questID, title, logStatus)
+  questID = tonumber(questID)
+  local quests = pfDB and pfDB.quests and pfDB.quests.data
+  local data = questID and quests and quests[questID]
+  local finishers = data and data["end"] and data["end"].U
+  if not finishers then return end
+
+  title = title or QuestMarkerTitle(questID, data)
+  local status = title and questMarkerState.titles[title] or logStatus or "INCOMPLETE"
+  local repeatable = QuestMarkerRepeatable(questID, title, data)
+  if not repeatable and C_QuestLog and C_QuestLog.GetQuestDetails then
+    local ok, details = pcall(C_QuestLog.GetQuestDetails, questID)
+    if ok then repeatable = QuestMarkerRepeatable(questID, title, details) end
+  end
+  if repeatable then
+    questMarkerState.repeatableQuests[questID] = true
+    if title then questMarkerState.repeatableTitles[title] = true end
+  end
+
+  for _, npcID in pairs(finishers) do
+    if repeatable then questMarkerState.repeatable[npcID] = true end
+    AddQuestMarker(npcID, status == "COMPLETE" and "COMPLETE"
+      or repeatable and "REPEATABLE" or "INCOMPLETE")
+  end
+end
+
 function Z.RebuildQuestMarkers()
   table.wipe(questMarkerState.byNPC)
   table.wipe(questMarkerState.titles)
+  table.wipe(questMarkerState.activeQuestIDs)
 
   local getTitle = pfQuestCompat and pfQuestCompat.GetQuestLogTitle or GetQuestLogTitle
   if getTitle then
@@ -456,6 +547,13 @@ function Z.RebuildQuestMarkers()
         else
           questMarkerState.titles[title] = "INCOMPLETE"
         end
+        if C_QuestLog and C_QuestLog.GetQuestIDForLogIndex then
+          local ok, questID = pcall(C_QuestLog.GetQuestIDForLogIndex, index)
+          questID = ok and tonumber(questID)
+          if questID and questID > 0 then
+            questMarkerState.activeQuestIDs[questID] = questMarkerState.titles[title]
+          end
+        end
       end
     end
   end
@@ -463,12 +561,19 @@ function Z.RebuildQuestMarkers()
   local quests = pfDB and pfDB.quests and pfDB.quests.data
   if quests and pfDatabase and pfDatabase.lastQuestGiversSet then
     for questID in pairs(pfDatabase.lastQuestGiversSet) do
-      local data = quests[questID]
+      questID = tonumber(questID)
+      local data = questID and quests[questID]
       local starters = data and data.start and data.start.U
-      if starters then
+      local title = QuestMarkerTitle(questID, data)
+      if starters and QuestMarkerAvailable(questID, data, title) then
+        local repeatable = QuestMarkerRepeatable(questID, title, data)
+        if repeatable then
+          questMarkerState.repeatableQuests[questID] = true
+          if title then questMarkerState.repeatableTitles[title] = true end
+        end
         for _, npcID in pairs(starters) do
-          local status = IsRepeatableQuestMarker(data) or questMarkerState.repeatable[npcID]
-          AddQuestMarker(npcID, status and "REPEATABLE" or "AVAILABLE")
+          if repeatable then questMarkerState.repeatable[npcID] = true end
+          AddQuestMarker(npcID, repeatable and "REPEATABLE" or "AVAILABLE")
         end
       end
     end
@@ -476,21 +581,11 @@ function Z.RebuildQuestMarkers()
 
   if quests and pfQuest and pfQuest.questlog then
     for questID, entry in pairs(pfQuest.questlog) do
-      local data = quests[tonumber(questID)]
-      local finishers = data and data["end"] and data["end"].U
-      if finishers then
-        local status = entry.title and questMarkerState.titles[entry.title] or "INCOMPLETE"
-        local repeatable = IsRepeatableQuestMarker(data)
-        if not repeatable and C_QuestLog and C_QuestLog.GetQuestDetails then
-          local ok, details = pcall(C_QuestLog.GetQuestDetails, tonumber(questID))
-          if ok then repeatable = IsRepeatableQuestMarker(details) end
-        end
-        for _, npcID in pairs(finishers) do
-          if repeatable then questMarkerState.repeatable[npcID] = true end
-          AddQuestMarker(npcID, repeatable and "REPEATABLE" or status)
-        end
-      end
+      AddActiveQuestMarkers(questID, type(entry) == "table" and entry.title)
     end
+  end
+  for questID, status in pairs(questMarkerState.activeQuestIDs) do
+    AddActiveQuestMarkers(questID, nil, status)
   end
 
   questMarkerState.revision = questMarkerState.revision + 1
@@ -505,64 +600,87 @@ function Z.RememberQuestGiver()
   local npcID = QuestNPCID(unit, guid)
   local status
 
-  if C_GossipInfo then
-    for _, getter in pairs({ C_GossipInfo.GetAvailableQuests, C_GossipInfo.GetActiveQuests }) do
-      if getter then
-        local ok, entries = pcall(getter)
-        if ok and type(entries) == "table" then
-          for _, entry in pairs(entries) do
-            if type(entry) == "table" and IsRepeatableQuestMarker(entry) then
-              if npcID then questMarkerState.repeatable[npcID] = true end
-              status = "REPEATABLE"
-            elseif type(entry) == "table" and entry.isComplete then
-              status = "COMPLETE"
-            elseif not status then
-              status = getter == C_GossipInfo.GetAvailableQuests and "AVAILABLE" or "INCOMPLETE"
-            end
-          end
-        end
+  local function ConsiderQuest(entry, available)
+    local details = type(entry) == "table" and entry or nil
+    local title = details and (details.title or details.name) or type(entry) == "string" and entry
+    local questID = details and tonumber(details.questID or details.questId or details.id)
+    local quests = pfDB and pfDB.quests and pfDB.quests.data
+    local data = questID and quests and quests[questID]
+    title = title or QuestMarkerTitle(questID, data)
+    local repeatable = QuestMarkerRepeatable(questID, title, details)
+      or QuestMarkerRepeatable(questID, title, data)
+    if repeatable then
+      if npcID then questMarkerState.repeatable[npcID] = true end
+      if questID then questMarkerState.repeatableQuests[questID] = true end
+      if title then questMarkerState.repeatableTitles[title] = true end
+    end
+
+    local loggedStatus = title and questMarkerState.titles[title]
+      or questID and questMarkerState.activeQuestIDs[questID]
+    local complete = details and (details.isComplete or details.isCompleted
+      or details.readyForTurnIn or details.readyForTurnin)
+    if not available and loggedStatus == "COMPLETE" then complete = true end
+    if complete then
+      status = BestQuestMarker(status, "COMPLETE")
+    elseif available then
+      if loggedStatus then
+        status = BestQuestMarker(status, loggedStatus == "COMPLETE" and "COMPLETE"
+          or repeatable and "REPEATABLE" or "INCOMPLETE")
+      elseif QuestMarkerAvailable(questID, data or details, title)
+        and not (details and (details.isAvailable == false or details.available == false)) then
+        status = BestQuestMarker(status, repeatable and "REPEATABLE" or "AVAILABLE")
       end
+    else
+      status = BestQuestMarker(status, repeatable and "REPEATABLE" or "INCOMPLETE")
     end
   end
 
+  if C_GossipInfo and C_GossipInfo.GetAvailableQuests then
+    local ok, entries = pcall(C_GossipInfo.GetAvailableQuests)
+    if ok and type(entries) == "table" then
+      for _, entry in pairs(entries) do ConsiderQuest(entry, true) end
+    end
+  end
+  if C_GossipInfo and C_GossipInfo.GetActiveQuests then
+    local ok, entries = pcall(C_GossipInfo.GetActiveQuests)
+    if ok and type(entries) == "table" then
+      for _, entry in pairs(entries) do ConsiderQuest(entry, nil) end
+    end
+  end
   if GetGossipAvailableQuests then
     local entries = { GetGossipAvailableQuests() }
-    if table.getn(entries) > 0 and not status then
-      status = npcID and questMarkerState.repeatable[npcID] and "REPEATABLE" or "AVAILABLE"
+    for index = 1, table.getn(entries), 2 do
+      ConsiderQuest(entries[index], true)
     end
   end
   if GetGossipActiveQuests then
     local entries = { GetGossipActiveQuests() }
     for index = 1, table.getn(entries), 2 do
-      local current = questMarkerState.titles[entries[index]] or "INCOMPLETE"
-      if not status or questMarkerState[current].priority > questMarkerState[status].priority then
-        status = current
-      end
+      ConsiderQuest(entries[index], nil)
     end
   end
-  if GetNumAvailableQuests and GetNumAvailableQuests() > 0 and not status then
-    status = npcID and questMarkerState.repeatable[npcID] and "REPEATABLE" or "AVAILABLE"
+  if GetNumAvailableQuests then
+    for index = 1, GetNumAvailableQuests() do
+      local title = GetAvailableTitle and GetAvailableTitle(index)
+      ConsiderQuest(title or {}, true)
+    end
   end
   if GetNumActiveQuests and GetActiveTitle then
     for index = 1, GetNumActiveQuests() do
-      local current = questMarkerState.titles[GetActiveTitle(index)] or "INCOMPLETE"
-      if not status or questMarkerState[current].priority > questMarkerState[status].priority then
-        status = current
-      end
+      ConsiderQuest(GetActiveTitle(index), nil)
     end
   end
   if event == "QUEST_COMPLETE" or event == "QUEST_PROGRESS" and IsQuestCompletable and IsQuestCompletable() then
-    status = "COMPLETE"
-  elseif event == "QUEST_PROGRESS" and not status then
-    status = "INCOMPLETE"
-  elseif event == "QUEST_DETAIL" and not status then
-    status = "AVAILABLE"
+    status = BestQuestMarker(status, "COMPLETE")
+  elseif event == "QUEST_PROGRESS" then
+    status = BestQuestMarker(status, "INCOMPLETE")
+  elseif event == "QUEST_DETAIL" then
+    status = BestQuestMarker(status, "AVAILABLE")
   end
 
-  if not status then return end
-  if guid then questMarkerState.byGUID[guid] = status end
-  if name then questMarkerState.byName[name] = status end
-  if npcID then AddQuestMarker(npcID, status) end
+  if guid then questMarkerState.byGUID[guid] = status or "NONE" end
+  if name then questMarkerState.byName[name] = status or "NONE" end
+  if npcID then questMarkerState.byNPC[npcID] = status end
   questMarkerState.revision = questMarkerState.revision + 1
   if Z.nameplates then Z.nameplates.eventcache = true end
 end
@@ -607,8 +725,10 @@ function Z.UpdateQuestIcon(plate, name, isPlayer)
 
   local npcID = QuestNPCID(plate.unit, guid)
   local status = guid and questMarkerState.byGUID[guid]
+  if status == "NONE" then marker:Hide(); return end
   if not status and npcID then status = questMarkerState.byNPC[npcID] end
   if not status then status = questMarkerState.byName[name] end
+  if status == "NONE" then marker:Hide(); return end
   if not status and pfDatabase and pfDatabase.nameIndex and pfDatabase.nameIndex.units then
     local matches = pfDatabase.nameIndex.units[name]
     if matches then
@@ -630,28 +750,39 @@ end
 
 local questWatcher = CreateFrame("Frame", "zNameplatesQuestWatcher", UIParent)
 for _, eventName in pairs({ "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "QUEST_LOG_UPDATE",
-  "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_TURNED_IN", "QUEST_FINISHED", "GOSSIP_SHOW",
+  "QUEST_WATCH_UPDATE", "UNIT_QUEST_LOG_CHANGED", "PLAYER_LEVEL_UP", "QUEST_ACCEPTED",
+  "QUEST_REMOVED", "QUEST_TURNED_IN", "QUEST_FINISHED", "GOSSIP_SHOW", "GOSSIP_CLOSED",
   "QUEST_GREETING", "QUEST_DETAIL", "QUEST_PROGRESS", "QUEST_COMPLETE" }) do
   pcall(questWatcher.RegisterEvent, questWatcher, eventName)
 end
 questWatcher:SetScript("OnEvent", function()
   if event == "GOSSIP_SHOW" or event == "QUEST_GREETING" or event == "QUEST_DETAIL"
-    or event == "QUEST_PROGRESS" or event == "QUEST_COMPLETE" then
+    or event == "QUEST_PROGRESS" or event == "QUEST_COMPLETE"
+    or (event == "QUEST_LOG_UPDATE" or event == "QUEST_ACCEPTED" or event == "QUEST_TURNED_IN")
+      and UnitExists("npc") then
     Z.RememberQuestGiver()
   else
     table.wipe(questMarkerState.byGUID)
     table.wipe(questMarkerState.byName)
   end
-  this.refreshAt = GetTime() + .25
+  this.liveRefresh = nil
+  this.refreshAt = GetTime() + .1
 end)
 questWatcher:SetScript("OnUpdate", function()
   if not this.refreshAt or GetTime() < this.refreshAt then return end
   if pfQuest and ((pfQuest.queueCount or 0) > 0 or pfQuest.updateQuestGivers or pfQuest.updateQuestLog) then
-    this.refreshAt = GetTime() + .25
+    if not this.liveRefresh then
+      Z.RebuildQuestMarkers()
+      if UnitExists("npc") then Z.RememberQuestGiver() end
+      this.liveRefresh = true
+    end
+    this.refreshAt = GetTime() + .1
     return
   end
   this.refreshAt = nil
+  this.liveRefresh = nil
   Z.RebuildQuestMarkers()
+  if UnitExists("npc") then Z.RememberQuestGiver() end
 end)
 
 function Z.RefreshQuestIcons()

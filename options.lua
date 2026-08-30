@@ -70,8 +70,6 @@ local pages = {
       { "check", "Allow friendly nameplate overlap", {"nameplates","overlap_friendly"} },
       { "check", "Overlap all plates in friendly areas", {"nameplates","overlap_friendly_area"} },
       { "check", "Never overlap plates in combat with me", {"nameplates","overlap_combat"} },
-      { "check", "Right-click mouselook/attack", {"nameplates","rightclick"} },
-      { "input", "Right-click threshold", {"nameplates","clickthreshold"} },
       { "check", "Replace totems with icons", {"nameplates","totemicons"} },
       { "check", "Show guild/sub-name", {"nameplates","showguildname"} },
     },
@@ -184,8 +182,21 @@ local pages = {
     },
   },
   {
+    name = "Distance",
+    items = {
+      { "check", "Scale nameplates by exact distance", {"nameplates","distance_scale"} },
+      { "slider", "Minimum distant size", {"nameplates","distance_min_scale"}, 20, 100, 1 },
+      { "check", "Fade nameplates by exact distance", {"nameplates","distance_alpha"} },
+      { "slider", "Minimum distant opacity", {"nameplates","distance_min_alpha"}, 20, 100, 1 },
+      { "check", "Fade and desaturate out-of-sight plates", {"nameplates","los_fade"} },
+      { "slider", "Out-of-sight desaturation", {"nameplates","los_desaturation"}, 0, 100, 1 },
+    },
+  },
+  {
     name = "Advanced",
     items = {
+      { "check", "Right-click mouselook/attack", {"nameplates","rightclick"} },
+      { "input", "Right-click threshold", {"nameplates","clickthreshold"} },
       { "input", "Normal update rate (updates/sec)", {"throttle","nameplates"} },
       { "input", "Target update rate", {"throttle","nameplates_target"} },
       { "input", "Castbar update rate", {"throttle","nameplates_castbar"} },
@@ -281,6 +292,31 @@ local function CreateWidget(parent, item, index)
     label:SetWidth(300)
     check:SetScript("OnClick", function() SetValue(path, this:GetChecked() and "1" or "0") end)
     widget.control = check
+  elseif kind == "slider" then
+    local label = Label(parent, text, x, y)
+    label:SetWidth(220)
+    local sliderName = "zNameplatesOptionSlider" .. tostring(table.getn(widgets) + 1)
+    local slider = CreateFrame("Slider", sliderName, parent, "OptionsSliderTemplate")
+    slider:SetPoint("TOPRIGHT", parent, "TOPLEFT", x + 350, y + 2)
+    slider:SetWidth(125); slider:SetHeight(16)
+    slider:SetMinMaxValues(item[4] or 0, item[5] or 100)
+    slider:SetValueStep(item[6] or 1)
+    if getglobal then
+      local low = getglobal(sliderName .. "Low")
+      local high = getglobal(sliderName .. "High")
+      local title = getglobal(sliderName .. "Text")
+      if low then low:SetText((item[4] or 0) .. "%") end
+      if high then high:SetText((item[5] or 100) .. "%") end
+      if title then title:SetText("") end
+    end
+    slider:SetScript("OnValueChanged", function()
+      local value = math.floor((tonumber(arg1) or this:GetValue() or 60) + .5)
+      label:SetText(text .. ": " .. value .. "%")
+      if not this.zNameplatesUpdating then SetValue(path, value) end
+    end)
+    widget.control = slider
+    widget.label = label
+    widget.text = text
   elseif kind == "input" then
     Label(parent, text, x, y)
     local input = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
@@ -355,12 +391,13 @@ local function ShowTab(index)
   frame:Refresh()
 end
 
+local tabStep = math.floor((820 - 40) / table.getn(pages))
 for pageIndex = 1, table.getn(pages) do
   local tabIndex = pageIndex
   local pageData = pages[pageIndex]
   local button = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-  button:SetPoint("TOPLEFT", frame, "TOPLEFT", 20 + (pageIndex - 1) * 130, -68)
-  button:SetWidth(125); button:SetHeight(24); button:SetText(pageData.name)
+  button:SetPoint("TOPLEFT", frame, "TOPLEFT", 20 + (pageIndex - 1) * tabStep, -68)
+  button:SetWidth(tabStep - 5); button:SetHeight(24); button:SetText(pageData.name)
   button:SetScript("OnClick", function() ShowTab(tabIndex) end)
   tabButtons[pageIndex] = button
 
@@ -393,6 +430,12 @@ function frame:Refresh()
     if widget.path then
       local value = GetValue(widget.path)
       if widget.kind == "check" then widget.control:SetChecked(value == "1")
+      elseif widget.kind == "slider" then
+        local amount = tonumber(value) or 60
+        widget.control.zNameplatesUpdating = true
+        widget.control:SetValue(amount)
+        widget.control.zNameplatesUpdating = nil
+        widget.label:SetText(widget.text .. ": " .. math.floor(amount + .5) .. "%")
       elseif widget.kind == "input" and not widget.control.zNameplatesEditing then widget.control:SetText(value or "")
       elseif widget.kind == "select" then
         local label = tostring(value or "")
@@ -437,15 +480,14 @@ end
 do
   local listRows = {}
   local listEntries = {}
-  local listCombatMemory = {}
-  local listActiveGuids = {}
-  local LIST_HEADER_HEIGHT = 24
-  local LIST_PADDING = 8
+  local listEntryCount = 0
+  local LIST_HEADER_HEIGHT = 18
+  local LIST_PADDING = 4
 
   local list = CreateFrame("Frame", "zNameplatesCombatList", UIParent)
   list:SetFrameStrata("MEDIUM")
-  list:SetWidth(170)
-  list:SetHeight(LIST_HEADER_HEIGHT + 24)
+  list:SetWidth(160)
+  list:SetHeight(LIST_HEADER_HEIGHT + 18)
   list:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -32, -180)
   list:SetMovable(true)
   list:EnableMouse(true)
@@ -453,35 +495,29 @@ do
   list:Hide()
 
   local listHeader = CreateFrame("Button", nil, list)
-  listHeader:SetPoint("TOPLEFT", list, "TOPLEFT", 2, -2)
-  listHeader:SetPoint("TOPRIGHT", list, "TOPRIGHT", -2, -2)
-  listHeader:SetHeight(LIST_HEADER_HEIGHT - 2)
+  listHeader:SetPoint("TOPLEFT", list, "TOPLEFT", 1, -1)
+  listHeader:SetPoint("TOPRIGHT", list, "TOPRIGHT", -1, -1)
+  listHeader:SetHeight(LIST_HEADER_HEIGHT - 1)
   listHeader:RegisterForDrag("LeftButton")
   listHeader:SetScript("OnDragStart", function() list:StartMoving() end)
 
-  local listTitle = listHeader:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  listTitle:SetPoint("LEFT", listHeader, "LEFT", 8, 0)
-  listTitle:SetJustifyH("LEFT")
-  listTitle:SetTextColor(.2, 1, .8, 1)
-  listTitle:SetText("Combat Plates")
-
   local listCount = listHeader:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  listCount:SetPoint("LEFT", listTitle, "RIGHT", 5, 0)
+  listCount:SetPoint("LEFT", listHeader, "LEFT", 4, 0)
   listCount:SetTextColor(.75, .75, .75, 1)
   listCount:SetText("(0)")
 
   local listCollapse = CreateFrame("Button", nil, listHeader)
-  listCollapse:SetPoint("RIGHT", listHeader, "RIGHT", -22, 0)
-  listCollapse:SetWidth(19)
-  listCollapse:SetHeight(18)
+  listCollapse:SetPoint("RIGHT", listHeader, "RIGHT", -19, 0)
+  listCollapse:SetWidth(17)
+  listCollapse:SetHeight(16)
   listCollapse.text = listCollapse:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   listCollapse.text:SetAllPoints(listCollapse)
   listCollapse.text:SetText("-")
 
   local listClose = CreateFrame("Button", nil, listHeader)
-  listClose:SetPoint("RIGHT", listHeader, "RIGHT", -3, 0)
-  listClose:SetWidth(18)
-  listClose:SetHeight(18)
+  listClose:SetPoint("RIGHT", listHeader, "RIGHT", -2, 0)
+  listClose:SetWidth(16)
+  listClose:SetHeight(16)
   listClose.text = listClose:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   listClose.text:SetAllPoints(listClose)
   listClose.text:SetText("x")
@@ -491,13 +527,13 @@ do
   local listDivider = list:CreateTexture(nil, "ARTWORK")
   listDivider:SetTexture("Interface\\BUTTONS\\WHITE8X8")
   listDivider:SetVertexColor(.45, .45, .45, .45)
-  listDivider:SetPoint("TOPLEFT", list, "TOPLEFT", 5, -LIST_HEADER_HEIGHT)
-  listDivider:SetPoint("TOPRIGHT", list, "TOPRIGHT", -5, -LIST_HEADER_HEIGHT)
+  listDivider:SetPoint("TOPLEFT", list, "TOPLEFT", 3, -LIST_HEADER_HEIGHT)
+  listDivider:SetPoint("TOPRIGHT", list, "TOPRIGHT", -3, -LIST_HEADER_HEIGHT)
   listDivider:SetHeight(1)
 
   local listEmpty = list:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  listEmpty:SetPoint("TOP", list, "TOP", 0, -LIST_HEADER_HEIGHT - 8)
-  listEmpty:SetText("No enemies in combat")
+  listEmpty:SetPoint("TOP", list, "TOP", 0, -LIST_HEADER_HEIGHT - 5)
+  listEmpty:SetText("No nearby nameplates")
 
   local function ListSettings()
     return Z.config and Z.config.combatlist
@@ -524,22 +560,11 @@ do
     return 0
   end
 
-  local function ListPlateInCombat(plate)
+  local function ListPlateNearby(plate)
     local unit = plate and plate.unit
-    if not unit or not UnitExists(unit) or not UnitAffectingCombat("player")
-        or not UnitAffectingCombat(unit) or UnitCanAssist("player", unit)
-        or (UnitIsDead and UnitIsDead(unit)) then
-      if plate and plate.cachedGuid then listCombatMemory[plate.cachedGuid] = nil end
-      return nil
-    end
-
-    local guid = plate.cachedGuid or unit
-    local manager = Z.nameplates
-    if plate.taggedByPlayer or plate.neutralProvoked
-        or (manager and manager.IsCombatWithPlayer and manager.IsCombatWithPlayer(plate)) then
-      listCombatMemory[guid] = true
-    end
-    return listCombatMemory[guid]
+    return unit and not plate.isCritter and UnitExists(unit)
+      and not (UnitCanAssist and UnitCanAssist("player", unit))
+      and not (UnitIsDead and UnitIsDead(unit))
   end
 
   local function ListCompare(left, right)
@@ -550,8 +575,8 @@ do
   end
 
   local function BuildCombatList()
-    for index = table.getn(listEntries), 1, -1 do listEntries[index] = nil end
-    for guid in pairs(listActiveGuids) do listActiveGuids[guid] = nil end
+    for index = listEntryCount, 1, -1 do listEntries[index] = nil end
+    listEntryCount = 0
 
     local visible = Z.nameplates and Z.nameplates.visiblePlates
     if not visible then return 0 end
@@ -559,24 +584,32 @@ do
       local plate = base and base.nameplate
       if plate and plate.unit and (not base.IsVisible or base:IsVisible()) then
         local guid = plate.cachedGuid or plate.unit
-        listActiveGuids[guid] = true
-        if ListPlateInCombat(plate) then
+        if ListPlateNearby(plate) then
           local name = plate.name and plate.name.GetText and plate.name:GetText()
           name = name or (UnitName and UnitName(plate.unit)) or "Unknown"
-          table.insert(listEntries, {
+          listEntryCount = listEntryCount + 1
+          listEntries[listEntryCount] = {
             plate = plate, guid = tostring(guid), name = string.lower(name),
             level = ListPlateLevel(plate),
             tagged = (plate.taggedByPlayer or plate.taggedByOther) and 1 or 0,
-          })
+          }
         end
       end
     end
 
-    for guid in pairs(listCombatMemory) do
-      if not listActiveGuids[guid] then listCombatMemory[guid] = nil end
+    -- Avoid the old client's stale implicit table length on reused arrays.
+    -- Insertion sorting this small visible-nameplate list also guarantees that
+    -- the comparator never receives a nil entry.
+    for i = 2, listEntryCount do
+      local entry = listEntries[i]
+      local index = i - 1
+      while index >= 1 and ListCompare(entry, listEntries[index]) do
+        listEntries[index + 1] = listEntries[index]
+        index = index - 1
+      end
+      listEntries[index + 1] = entry
     end
-    table.sort(listEntries, ListCompare)
-    return table.getn(listEntries)
+    return listEntryCount
   end
 
   local function SetListFont(text, source, fallbackSize)
@@ -601,6 +634,39 @@ do
     destination:SetTextColor(r or 1, g or 1, b or 1, a or 1)
   end
 
+  local function UpdateListRaidIcon(row, plate)
+    local icon = row.raidicon
+    local raidIndex
+    if GetRaidTargetIndex and plate.unit then
+      local ok, value = pcall(GetRaidTargetIndex, plate.unit)
+      if ok then raidIndex = tonumber(value) end
+    end
+
+    if raidIndex and raidIndex >= 1 and raidIndex <= 8 then
+      if SetRaidTargetIconTexture then
+        SetRaidTargetIconTexture(icon, raidIndex)
+      else
+        local column = math.mod(raidIndex - 1, 4)
+        local atlasRow = math.floor((raidIndex - 1) / 4)
+        icon:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons")
+        icon:SetTexCoord(column * .25, (column + 1) * .25,
+          atlasRow * .5, (atlasRow + 1) * .5)
+      end
+      icon:Show()
+      return
+    end
+
+    -- Fall back to the marker texture already resolved on the source plate.
+    local source = plate.raidicon
+    if source and source.IsShown and source:IsShown() and source.GetTexture and source:GetTexture() then
+      icon:SetTexture(source:GetTexture())
+      if source.GetTexCoord then icon:SetTexCoord(source:GetTexCoord()) end
+      icon:Show()
+    else
+      icon:Hide()
+    end
+  end
+
   local function CreateListRow(index)
     local row = CreateFrame("Button", nil, list)
     row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
@@ -610,17 +676,24 @@ do
 
     row.health = CreateFrame("StatusBar", nil, row)
     row.health:SetFrameLevel(row:GetFrameLevel() + 1)
-    row.health:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 25, 3)
-    row.health:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -3, 3)
+    row.health:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 20, 2)
+    row.health:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -1, 2)
     Z.CreateBackdrop(row.health, 1)
 
+    row.raidicon = row.health:CreateTexture(nil, "OVERLAY")
+    row.raidicon:SetPoint("RIGHT", row.health, "RIGHT", -1, 0)
+    row.raidicon:SetWidth(12)
+    row.raidicon:SetHeight(12)
+    row.raidicon:SetAlpha(.45)
+    row.raidicon:Hide()
+
     row.name = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    row.name:SetPoint("BOTTOMLEFT", row.health, "TOPLEFT", 0, 2)
-    row.name:SetPoint("BOTTOMRIGHT", row.health, "TOPRIGHT", 0, 2)
+    row.name:SetPoint("BOTTOMLEFT", row.health, "TOPLEFT", 0, 1)
+    row.name:SetPoint("BOTTOMRIGHT", row.health, "TOPRIGHT", 0, 1)
     row.name:SetJustifyH("CENTER")
 
     row.level = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    row.level:SetPoint("RIGHT", row.health, "LEFT", -4, 0)
+    row.level:SetPoint("RIGHT", row.health, "LEFT", -2, 0)
     row.level:SetJustifyH("RIGHT")
 
     row.healthText = row.health:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -637,7 +710,7 @@ do
     row:SetHeight(rowHeight)
     row:ClearAllPoints()
     row:SetPoint("TOPLEFT", list, "TOPLEFT", LIST_PADDING,
-      -LIST_HEADER_HEIGHT - 4 - (index - 1) * rowHeight)
+      -LIST_HEADER_HEIGHT - 2 - (index - 1) * rowHeight)
 
     row.health:SetHeight(math.max(5, tonumber(Z.config.nameplates.heighthealth) or 8))
     row.health:SetStatusBarTexture(Z.media[Z.config.nameplates.healthtexture])
@@ -672,6 +745,7 @@ do
       or (entry.level == 999 and "??" or entry.level))
     SetListTextColor(row.name, plate.name, 1, 1, 1, 1)
     SetListTextColor(row.level, plate.level, 1, 1, .2, 1)
+    UpdateListRaidIcon(row, plate)
 
     local sourceText = health and health.text
     local healthText = sourceText and sourceText.GetText and sourceText:GetText()
@@ -688,23 +762,23 @@ do
   function list:Refresh()
     local settings = ListSettings()
     if not settings then return end
-    local width = math.max(165, math.max(75, tonumber(Z.config.nameplates.width) or 120)
-      + 25 + LIST_PADDING * 2 + 3)
+    local width = math.max(160, math.max(75, tonumber(Z.config.nameplates.width) or 120)
+      + 20 + LIST_PADDING * 2 + 1)
     local useUnit = Z.config.nameplates.use_unitfonts == "1"
     local fontSize = tonumber(useUnit and Z.config.global.font_unit_size
       or Z.config.global.font_size) or 12
-    local rowHeight = fontSize + math.max(5, tonumber(Z.config.nameplates.heighthealth) or 8) + 8
+    local rowHeight = fontSize + math.max(5, tonumber(Z.config.nameplates.heighthealth) or 8) + 5
     local total = BuildCombatList()
 
     self:SetWidth(width)
     listCount:SetText("(" .. total .. ")")
-    Z.CreateBackdrop(self, 1)
+    Z.CreateBackdrop(self, 0)
 
     if settings.collapsed == "1" then
       listCollapse.text:SetText("+")
       listDivider:Hide()
       listEmpty:Hide()
-      self:SetHeight(LIST_HEADER_HEIGHT + 2)
+      self:SetHeight(LIST_HEADER_HEIGHT + 1)
       for i = 1, table.getn(listRows) do listRows[i]:Hide() end
       return
     end
@@ -713,10 +787,10 @@ do
     listDivider:Show()
     if total == 0 then
       -- An enabled list always leaves a small movable frame on screen.
-      self:SetHeight(LIST_HEADER_HEIGHT + 24)
+      self:SetHeight(LIST_HEADER_HEIGHT + 18)
       listEmpty:Show()
     else
-      self:SetHeight(LIST_HEADER_HEIGHT + 7 + total * rowHeight)
+      self:SetHeight(LIST_HEADER_HEIGHT + 4 + total * rowHeight)
       listEmpty:Hide()
     end
 
@@ -764,8 +838,6 @@ do
       this:SetPoint(settings.point or "TOPRIGHT", UIParent,
         settings.relativePoint or "TOPRIGHT", tonumber(settings.x) or -32, tonumber(settings.y) or -180)
       if settings.shown == "1" then this:Show() end
-    elseif event == "PLAYER_REGEN_ENABLED" then
-      for guid in pairs(listCombatMemory) do listCombatMemory[guid] = nil end
     end
     if this:IsShown() then this:Refresh() end
   end)
