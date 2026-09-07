@@ -97,7 +97,12 @@ local defaults = {
     targetglow = "1", glowcolor = "0.361,0.004,0,0.35", targetzoom = "0",
     targetzoomval = ".40", notargalpha = ".75",
     healthtexture = PATH .. "\\Assets\\img\\bar",
-    name = { fontstyle = "OUTLINE" },
+    name = {
+      fontstyle = "OUTLINE",
+      fontstyle_friendly = "OUTLINE",
+      fontsize = "10",
+      fontsize_friendly = "10",
+    },
     health = { offset = "-3" },
     debuffs = {
       filter = "none", whitelist = "", blacklist = "",
@@ -152,6 +157,16 @@ local function MigrateNameplateSettings(config)
       nameplates.enemynamecolor = "1,1,1,1"
     end
     nameplates.enemynamegray_v1 = nil
+  end
+
+  if nameplates.name then
+    local currentUnitSize = (config.global and config.global.font_unit_size) or (config.global and config.global.font_size) or "10"
+    if not nameplates.name.fontsize or nameplates.name.fontsize == "" then
+      nameplates.name.fontsize = currentUnitSize
+    end
+    if not nameplates.name.fontsize_friendly or nameplates.name.fontsize_friendly == "" then
+      nameplates.name.fontsize_friendly = nameplates.name.fontsize or currentUnitSize
+    end
   end
 end
 

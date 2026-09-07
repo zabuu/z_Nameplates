@@ -4,32 +4,19 @@ function zNameplates.StartNameplates()
   -- environment. Keeping them out of the lexical scope is important on the
   -- Vanilla Lua compiler, which allows only 32 upvalues per nested function.
   getfenv(1).C = zNameplates.config
+  getfenv(1).DEPTH_STRATAS = { "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG" }
+  getfenv(1).depthPlates = {}
+  getfenv(1).plateLeft = {}
+  getfenv(1).plateRight = {}
+  getfenv(1).plateTop = {}
+  getfenv(1).plateBottom = {}
+  getfenv(1).plateStrata = {}
+  getfenv(1).plateRank = {}
 
   -- disable original castbars
   pcall(SetCVar, "ShowVKeyCastbar", 0)
 
-  -- Local function references for performance
-  local GetTime = GetTime
-  local UnitName = UnitName
-  local UnitClass = UnitClass
-  local UnitLevel = UnitLevel
-  local UnitIsPlayer = UnitIsPlayer
-  local UnitIsDead = UnitIsDead
-  local UnitAffectingCombat = UnitAffectingCombat
-  local UnitExists = UnitExists
-  local UnitIsUnit = UnitIsUnit
-  local UnitCanAssist = UnitCanAssist
-  local UnitHealth = UnitHealth
-  local UnitHealthMax = UnitHealthMax
-  local pairs = pairs
-  local tonumber = tonumber
-  local strlower = strlower
-  local strfind = strfind
-  local strlen = strlen
-  local floor = floor
-  local ceil = ceil
-  local abs = abs
-  local mathmod = math.mod
+  local mathmod = math.mod or mathmod
 
   local unitcolors = {
     ["ENEMY_NPC"] = { .9, .2, .3, .8 },
@@ -229,6 +216,15 @@ function zNameplates.StartNameplates()
     end
   end
 
+  local function GetNameplateFontSize(isFriendly)
+    local custom = isFriendly and (C.nameplates.name.fontsize_friendly or C.nameplates.name.fontsize) or C.nameplates.name.fontsize
+    if custom and custom ~= "" and tonumber(custom) and tonumber(custom) > 0 then
+      return tonumber(custom)
+    end
+    local fallback = C.nameplates.use_unitfonts == "1" and C.global.font_unit_size or C.global.font_size
+    return tonumber(fallback) or 10
+  end
+
   local function RebuildOfftanks()
     offtanks = {}
     for k, v in pairs({strsplit("#", C.nameplates.combatofftanks)}) do
@@ -343,7 +339,7 @@ function zNameplates.StartNameplates()
   local function ExactUnitDistance(unit)
     if not unit then return nil end
 
-    if cfg.distance_unitxp then
+    if type(UnitXP) == "function" then
       local found, distance = pcall(UnitXP, "distanceBetween", "player", unit)
       if found and type(distance) == "number" and distance >= 0 then return distance end
     end
@@ -362,6 +358,279 @@ function zNameplates.StartNameplates()
         local dx, dy, dz = ux - px, uy - py, (uz or 0) - (pz or 0)
         return math.sqrt(dx * dx + dy * dy + dz * dz)
       end
+    end
+  end
+
+  local function GetUnitDepth(nameplate)
+    if not nameplate then return 40 end
+    local guid = nameplate.cachedGuid
+    local unit = nameplate.unit
+
+    if not guid and nameplate.parent and nameplate.parent.GetName then
+      local ok, g = pcall(nameplate.parent.GetName, nameplate.parent, 1)
+      if ok and type(g) == "string" and string.find(g, "^0[xX]%x+$") then
+        guid = g
+        nameplate.cachedGuid = g
+      end
+    end
+    if not guid and unit and UnitGUID then
+      local ok, g = pcall(UnitGUID, unit)
+      if ok and type(g) == "string" and string.find(g, "^0[xX]%x+$") then
+        guid = g
+        nameplate.cachedGuid = g
+      end
+    end
+
+    -- 1. Native zAPI camera projection (exact 3D depth along camera view vector)
+    -- This updates continuously during both camera rotation and player movement.
+    if type(zAPI) == "function" and guid then
+      local ok, sx, sy, depth, wx, wy, wz = pcall(zAPI, "projectUnit", guid, 0)
+      if ok and type(depth) == "number" and depth > 0 then
+        return depth
+      end
+    end
+
+    -- 2. Native zAPI worldToScreen from unitPosition
+    if type(zAPI) == "function" and guid then
+      local ok1, ux, uy, uz = pcall(zAPI, "unitPosition", guid)
+      if ok1 and type(ux) == "number" and type(uy) == "number" and type(uz) == "number" then
+        local ok2, sx, sy, depth = pcall(zAPI, "worldToScreen", ux, uy, uz)
+        if ok2 and type(depth) == "number" and depth > 0 then
+          return depth
+        end
+      end
+    end
+
+    -- 3. Exact 3D distance to player
+    if type(zAPI) == "function" and guid then
+      local pGuid = UnitGUID("player")
+      if pGuid then
+        local ok1, px, py, pz = pcall(zAPI, "unitPosition", pGuid)
+        local ok2, ux, uy, uz = pcall(zAPI, "unitPosition", guid)
+        if ok1 and ok2 and type(px) == "number" and type(ux) == "number" then
+          local dx = ux - px
+          local dy = uy - py
+          local dz = (uz or 0) - (pz or 0)
+          local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+          if dist > 0 then return dist end
+        end
+      end
+    end
+
+    -- 4. SuperWoW UnitPosition 3D distance
+    if UnitPosition then
+      local ok1, px, py, pz = pcall(UnitPosition, "player")
+      local ok2, ux, uy, uz = pcall(UnitPosition, unit or guid)
+      if ok1 and ok2 and type(px) == "number" and type(ux) == "number" then
+        local dx = ux - px
+        local dy = uy - py
+        local dz = (uz or 0) - (pz or 0)
+        local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if dist > 0 then return dist end
+      end
+    end
+
+    -- 5. 3D distance fallback
+    local dist = ExactUnitDistance(unit)
+    if dist then return dist end
+
+    return nameplate.depth or 40
+  end
+
+  local function SetPlateDepthLayer(nameplate, strata, baseLevel)
+    if not nameplate then return end
+
+    if nameplate.cachedStrata ~= strata then
+      nameplate.cachedStrata = strata
+      nameplate:SetFrameStrata(strata)
+      if nameplate.parent and nameplate.parent.SetFrameStrata then
+        pcall(nameplate.parent.SetFrameStrata, nameplate.parent, strata)
+      end
+    end
+
+    if nameplate.cachedBaseLevel ~= baseLevel then
+      nameplate.cachedBaseLevel = baseLevel
+      nameplate:SetFrameLevel(baseLevel + 1)
+      if nameplate.parent and nameplate.parent.SetFrameLevel then
+        pcall(nameplate.parent.SetFrameLevel, nameplate.parent, baseLevel)
+      end
+
+      if nameplate.health then
+        nameplate.health:SetFrameLevel(baseLevel + 2)
+      end
+      if nameplate.totem then
+        nameplate.totem:SetFrameLevel(baseLevel + 3)
+      end
+      if nameplate.castbar then
+        nameplate.castbar:SetFrameLevel(baseLevel + 3)
+        if nameplate.castbar.icon then
+          nameplate.castbar.icon:SetFrameLevel(baseLevel + 4)
+        end
+      end
+      if nameplate.debuffs then
+        for i = 1, 16 do
+          local debuff = nameplate.debuffs[i]
+          if debuff then
+            debuff:SetFrameLevel(baseLevel + 3)
+            if debuff.cd then
+              debuff.cd:SetFrameLevel(baseLevel + 4)
+            end
+          end
+        end
+      end
+      if nameplate.combopoints then
+        for i = 1, 5 do
+          local cp = nameplate.combopoints[i]
+          if cp then
+            cp:SetFrameLevel(baseLevel + 5)
+          end
+        end
+      end
+      if nameplate.raidiconframe then
+        nameplate.raidiconframe:SetFrameLevel(baseLevel + 6)
+      end
+    end
+  end
+
+  local function UpdateNameplateDepthLayers()
+    -- Ensure all visible plates have their GUID and unit token resolved immediately
+    -- (critical for stationary targets, dummies, and plates present at /rl)
+    if C_NamePlate and C_NamePlate.GetNamePlateForUnit then
+      for i = 1, 40 do
+        local u = "nameplate" .. i
+        if UnitExists(u) then
+          local p = C_NamePlate.GetNamePlateForUnit(u)
+          if p and p.nameplate then
+            if not p.nameplate.unit then p.nameplate.unit = u end
+            if not p.nameplate.cachedGuid then
+              p.nameplate.cachedGuid = UnitGUID(u)
+            end
+            if not visiblePlates[p] then
+              visiblePlates[p] = p
+            end
+          end
+        end
+      end
+    end
+
+    table.wipe(depthPlates)
+    local count = 0
+    for plate in pairs(visiblePlates) do
+      if plate:IsVisible() and plate.nameplate then
+        count = count + 1
+        depthPlates[count] = plate
+        local np = plate.nameplate
+        np.depth = GetUnitDepth(np)
+      end
+    end
+
+    if count == 0 then return end
+
+    if count == 1 then
+      local np = depthPlates[1].nameplate
+      local d = np.depth or 20
+      local rank = math.max(1, math.min(100, math.floor(101 - d * 2.5)))
+      local sIdx = math.min(5, math.floor((rank - 1) / 20) + 1)
+      local sName = DEPTH_STRATAS[sIdx] or "LOW"
+      local bLvl = math.floor(2 + (rank - 1) * 0.9)
+      SetPlateDepthLayer(np, sName, bLvl)
+      return
+    end
+
+    -- Sort strictly by camera depth (furthest from camera first, closest last)
+    -- Higher indices = closer plates -> receive higher ranks / stratas and render on top
+    table.sort(depthPlates, function(a, b)
+      local na = a.nameplate
+      local nb = b.nameplate
+      local da = na.depth or 40
+      local db = nb.depth or 40
+
+      if da ~= db then
+        return da > db -- larger depth = further away = sorted first
+      end
+
+      if na.istarget ~= nb.istarget then
+        return not na.istarget -- target tie-breaker only when depths are identical
+      end
+
+      return (na.platename or "") > (nb.platename or "")
+    end)
+
+    table.wipe(plateLeft)
+    table.wipe(plateRight)
+    table.wipe(plateTop)
+    table.wipe(plateBottom)
+    table.wipe(plateStrata)
+    table.wipe(plateRank)
+
+    for i = 1, count do
+      local p = depthPlates[i]
+      local np = p.nameplate
+      local l = np:GetLeft() or (p.GetLeft and p:GetLeft())
+      local r = np:GetRight() or (p.GetRight and p:GetRight())
+      local t = np:GetTop() or (p.GetTop and p:GetTop())
+      local b = np:GetBottom() or (p.GetBottom and p:GetBottom())
+      plateLeft[i] = l
+      plateRight[i] = r
+      plateTop[i] = t
+      plateBottom[i] = b
+
+      -- Configure 1-100 distinct rendering rank based on depth
+      -- depth = 0 yards -> rank 100 (closest, highest priority)
+      -- depth = 40 yards -> rank 1 (furthest, lowest priority)
+      local d = np.depth or 40
+      plateRank[i] = math.max(1, math.min(100, math.floor(101 - d * 2.5)))
+    end
+
+    -- Ensure strictly monotonic ranks for sorted plates (closer plate >= further plate)
+    for i = 2, count do
+      if plateRank[i] <= plateRank[i - 1] then
+        plateRank[i] = math.min(100, plateRank[i - 1] + 1)
+      end
+    end
+
+    -- Map 100 ranks across the 5 discrete rendering stratas (20 ranks per strata)
+    for i = 1, count do
+      plateStrata[i] = math.min(5, math.floor((plateRank[i] - 1) / 20) + 1)
+    end
+
+    -- Dynamic overlap resolution:
+    -- When plate i is closer than plate j (i > j) and overlaps on screen:
+    -- plate i MUST be in a strictly higher strata than plate j.
+    for i = 2, count do
+      local li, ri, ti, bi = plateLeft[i], plateRight[i], plateTop[i], plateBottom[i]
+      if li and ri and ti and bi then
+        for j = 1, i - 1 do
+          local lj, rj, tj, bj = plateLeft[j], plateRight[j], plateTop[j], plateBottom[j]
+          if lj and rj and tj and bj then
+            if not (li > rj + 4 or ri < lj - 4 or bi > tj + 4 or ti < bj - 4) then
+              if plateStrata[i] <= plateStrata[j] then
+                plateStrata[i] = math.min(5, plateStrata[j] + 1)
+                plateRank[i] = math.max(plateRank[i], (plateStrata[i] - 1) * 20 + 1)
+              end
+            end
+          end
+        end
+      end
+    end
+
+    -- Target priority boost if overlapping
+    for i = 1, count do
+      local np = depthPlates[i].nameplate
+      if np.istarget and plateStrata[i] < 5 then
+        plateStrata[i] = math.min(5, plateStrata[i] + 1)
+        plateRank[i] = math.max(plateRank[i], (plateStrata[i] - 1) * 20 + 1)
+      end
+    end
+
+    -- Apply strata and granular frame level (1 to 100)
+    for i = 1, count do
+      local np = depthPlates[i].nameplate
+      local sIdx = plateStrata[i] or 2
+      local sName = DEPTH_STRATAS[sIdx] or "LOW"
+      local r = plateRank[i] or 50
+      local baseLevel = math.floor(2 + (r - 1) * 0.9)
+      SetPlateDepthLayer(np, sName, baseLevel)
     end
   end
 
@@ -773,9 +1042,10 @@ function zNameplates.StartNameplates()
   end
 
   local function CreateDebuffIcon(plate, index)
+    local baseLevel = plate.cachedBaseLevel or 4
     plate.debuffs[index] = CreateFrame("Frame", plate.platename.."Debuff"..index, plate)
     plate.debuffs[index]:Hide()
-    plate.debuffs[index]:SetFrameLevel(4)
+    plate.debuffs[index]:SetFrameLevel(baseLevel + 3)
 
     plate.debuffs[index].icon = plate.debuffs[index]:CreateTexture(nil, "BACKGROUND")
     plate.debuffs[index].icon:SetTexture(.3,1,.8,1)
@@ -792,7 +1062,7 @@ function zNameplates.StartNameplates()
     if cfg.debuffanim ~= 1 then
       plate.debuffs[index].cd = CreateFrame("Frame", plate.platename.."Debuff"..index.."Cooldown", plate.debuffs[index])
       plate.debuffs[index].cd:SetAllPoints(plate.debuffs[index])
-      plate.debuffs[index].cd:SetFrameLevel(6)
+      plate.debuffs[index].cd:SetFrameLevel(baseLevel + 4)
       plate.debuffs[index].cd:SetScript("OnUpdate", CooldownFrame_OnUpdateModel)
       plate.debuffs[index].cd.AdvanceTime = DoNothing
       plate.debuffs[index].cd.SetSequence = DoNothing
@@ -801,7 +1071,7 @@ function zNameplates.StartNameplates()
       -- Use CooldownFrameTemplate for animation
       plate.debuffs[index].cd = CreateFrame(COOLDOWN_FRAME_TYPE, plate.platename.."Debuff"..index.."Cooldown", plate.debuffs[index], "CooldownFrameTemplate")
       plate.debuffs[index].cd:SetAllPoints(plate.debuffs[index])
-      plate.debuffs[index].cd:SetFrameLevel(6)
+      plate.debuffs[index].cd:SetFrameLevel(baseLevel + 4)
     end
 
     -- Set initial config flags (will be cached per-cooldown later)
@@ -819,8 +1089,8 @@ function zNameplates.StartNameplates()
     local debuffoffset = tonumber(C.nameplates.debuffoffset)
     local limit = floor(width / debuffsize)
     local font = C.nameplates.use_unitfonts == "1" and zNameplates.font_unit or zNameplates.font_default
-    local font_size = C.nameplates.use_unitfonts == "1" and C.global.font_unit_size or C.global.font_size
-    local font_style = C.nameplates.name.fontstyle
+    local font_size = GetNameplateFontSize(nameplate.isFriendly)
+    local font_style = (nameplate.isFriendly and (C.nameplates.name.fontstyle_friendly or C.nameplates.name.fontstyle)) or C.nameplates.name.fontstyle
 
     local aligna, alignb, offs, space
     if C.nameplates.debuffs["position"] == "BOTTOM" then
@@ -995,6 +1265,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         plate.nameplate.isFriendly = nil
         plate.nameplate.isNeutral = nil
         plate.nameplate.isCritter = nil
+        plate.nameplate.isTotem = nil
         plate.nameplate.neutralProvoked = nil
         plate.nameplate.taggedByPlayer = nil
         plate.nameplate.taggedByOther = nil
@@ -1002,6 +1273,9 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         plate.nameplate.totemIcon = nil
         plate.nameplate.questIconRevision = nil
         plate.nameplate.cachedAlpha = nil
+        plate.nameplate.depth = nil
+        plate.nameplate.cachedStrata = nil
+        plate.nameplate.cachedBaseLevel = nil
         if plate.nameplate.questIcon then plate.nameplate.questIcon:Hide() end
         if guid then
           plateByGuid[guid] = plate.nameplate
@@ -1038,6 +1312,9 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         plate.nameplate.questIconRevision = nil
         plate.nameplate.cachedGuid = nil
         plate.nameplate.unit = nil
+        plate.nameplate.depth = nil
+        plate.nameplate.cachedStrata = nil
+        plate.nameplate.cachedBaseLevel = nil
       end
 
     elseif event == "UNIT_FLAGS" then
@@ -1175,6 +1452,8 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         plate.nameplate.eventcache = true
       end
     end
+
+    UpdateNameplateDepthLayers()
 
     for plate in pairs(visiblePlates) do
       if plate:IsVisible() then
@@ -1389,6 +1668,8 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     -- NOTE: OnUpdate is now handled centrally, not per-plate/
     parent:SetScript("OnUpdate", nil)  -- Disable Blizzard's OnUpdate
 
+    SetPlateDepthLayer(nameplate, "BACKGROUND", 4)
+
     nameplates.OnConfigChange(parent)
   end
 
@@ -1397,8 +1678,8 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     local nameplate = frame.nameplate
 
     local font = C.nameplates.use_unitfonts == "1" and zNameplates.font_unit or zNameplates.font_default
-    local font_size = C.nameplates.use_unitfonts == "1" and C.global.font_unit_size or C.global.font_size
-    local font_style = C.nameplates.name.fontstyle
+    local font_size = GetNameplateFontSize(nameplate.isFriendly)
+    local font_style = (nameplate.isFriendly and (C.nameplates.name.fontstyle_friendly or C.nameplates.name.fontstyle)) or C.nameplates.name.fontstyle
     local glowr, glowg, glowb, glowa = GetStringColor(C.nameplates.glowcolor)
     local hlr, hlg, hlb, hla = GetStringColor(C.nameplates.highlightcolor)
     local hptexture = zNameplates.media[C.nameplates.healthtexture]
@@ -1564,7 +1845,19 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
 
     if player and unittype == "ENEMY_NPC" then unittype = "ENEMY_PLAYER" end
     if player and unittype == "FRIENDLY_NPC" then unittype = "FRIENDLY_PLAYER" end
+
+    -- Opposite-faction players cannot be attacked while the local player is not
+    -- PvP flagged. Treat those otherwise-hostile player plates as friendly so
+    -- every downstream nameplate rule (name colour, health visibility, overlap,
+    -- outlines, and aura filtering) follows the friendly-player settings. This
+    -- is recalculated on each data pass, so flagging for PvP restores the normal
+    -- hostile presentation without requiring a reload.
+    if unittype == "ENEMY_PLAYER" and UnitIsPVP and not UnitIsPVP("player") then
+      unittype = "FRIENDLY_PLAYER"
+    end
+
     plate.isCritter = CreatureType(plate) == 8
+    plate.isTotem = CreatureType(plate) == 11
     plate.isNeutral = unittype == "NEUTRAL_NPC"
     if plate.isNeutral then
       if IsCombatWithPlayer(plate) then
@@ -1576,6 +1869,16 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
       plate.neutralProvoked = nil
     end
     plate.isFriendly = unittype == "FRIENDLY_PLAYER" or unittype == "FRIENDLY_NPC"
+    local font_style = plate.isFriendly and (C.nameplates.name.fontstyle_friendly or C.nameplates.name.fontstyle) or C.nameplates.name.fontstyle
+    font_size = GetNameplateFontSize(plate.isFriendly)
+    if plate.cache.fontStyle ~= font_style or plate.cache.fontSize ~= font_size then
+      plate.cache.fontStyle = font_style
+      plate.cache.fontSize = font_size
+      local font = C.nameplates.use_unitfonts == "1" and zNameplates.font_unit or zNameplates.font_default
+      zNameplates.SetSmoothFontString(plate.name, font, font_size, font_style)
+      zNameplates.SetSmoothFontString(plate.guild, font, font_size, font_style)
+      zNameplates.SetSmoothFontString(plate.level, font, font_size, font_style)
+    end
     if plate.isFriendly or plate.isNeutral then
       plate.overlapEnabled = cfg.overlap_friendly
     else
@@ -2074,20 +2377,11 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
       nameplate:EnableMouse(not mouseEnabled)
     end
 
-    -- Cache strata changes
+    -- Target transition triggers immediate depth layer update
     if nameplate.istarget ~= target then
-      nameplate.target_strata = nil
+      nameplate.istarget = target
+      nameplates.depthUpdateAt = 0
     end
-
-    if target and nameplate.target_strata ~= 1 then
-      nameplate:SetFrameStrata("LOW")
-      nameplate.target_strata = 1
-    elseif not target and nameplate.target_strata ~= 0 then
-      nameplate:SetFrameStrata("BACKGROUND")
-      nameplate.target_strata = 0
-    end
-
-    nameplate.istarget = target
 
     -- queue update on visual target update
     if nameplate.cache.target ~= target then

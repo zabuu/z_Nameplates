@@ -142,7 +142,10 @@ local pages = {
       { "input", "Default font size", {"global","font_size"} },
       { "select", "Unit font", {"global","font_unit"}, fonts },
       { "input", "Unit font size", {"global","font_unit_size"} },
-      { "select", "Font style", {"nameplates","name","fontstyle"}, fontStyles },
+      { "input", "Hostile font size", {"nameplates","name","fontsize"} },
+      { "input", "Friendly font size", {"nameplates","name","fontsize_friendly"} },
+      { "select", "Hostile font style", {"nameplates","name","fontstyle"}, fontStyles },
+      { "select", "Friendly font style", {"nameplates","name","fontstyle_friendly"}, fontStyles },
       { "select", "Cooldown font", {"appearance","cd","font"}, fonts },
       { "check", "Abbreviate long names", {"unitframes","abbrevname"} },
       { "select", "Number abbreviation", {"unitframes","abbrevnum"}, {{"Off","0"},{"Precise","1"},{"Compact","2"}} },
@@ -160,7 +163,8 @@ local pages = {
       { "input", "Nameplate border size (-1 = default)", {"appearance","border","nameplates"} },
       { "check", "Pixel-perfect borders", {"appearance","border","pixelperfect"} },
       { "check", "HiDPI border correction", {"appearance","border","hidpi"} },
-      { "preview", "Nameplate Text Preview" },
+      { "preview", "Hostile Text Preview", nil, "hostile" },
+      { "preview", "Friendly Text Preview", nil, "friendly" },
     },
   },
   {
@@ -277,12 +281,12 @@ local function CreateWidget(parent, item, index)
   -- Keep pages at two readable columns. Thirteen rows fit comfortably above
   -- the footer and prevent the extra name-color controls from creating a
   -- clipped third column on the Health tab.
-  local col = math.floor((index - 1) / 13)
-  local row = math.mod(index - 1, 13)
+  local col = math.floor((index - 1) / 14)
+  local row = math.mod(index - 1, 14)
   local x = 22 + col * 390
   local y = -18 - row * 34
-  local kind, text, path = item[1], item[2], item[3]
-  local widget = { kind=kind, path=path }
+  local kind, text, path, extra = item[1], item[2], item[3], item[4]
+  local widget = { kind=kind, path=path, extra=extra }
 
   if kind == "check" then
     local check = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
@@ -448,9 +452,17 @@ function frame:Refresh()
     elseif widget.kind == "preview" then
       local useUnit = Z.config.nameplates.use_unitfonts == "1"
       local font = useUnit and Z.font_unit or Z.font_default
-      local size = tonumber(useUnit and Z.config.global.font_unit_size or Z.config.global.font_size) or 12
-      local style = Z.config.nameplates.name.fontstyle or ""
-      widget.control:SetFont(font, math.max(12, size + 3), style)
+      local isFriendly = widget.extra == "friendly"
+      local customSize = isFriendly
+        and (Z.config.nameplates.name.fontsize_friendly or Z.config.nameplates.name.fontsize)
+        or Z.config.nameplates.name.fontsize
+      local size = tonumber(customSize)
+        or tonumber(useUnit and Z.config.global.font_unit_size or Z.config.global.font_size)
+        or 10
+      local style = isFriendly
+        and (Z.config.nameplates.name.fontstyle_friendly or Z.config.nameplates.name.fontstyle or "")
+        or (Z.config.nameplates.name.fontstyle or "")
+      widget.control:SetFont(font, math.max(10, size + 2), style)
     end
   end
 end
@@ -478,9 +490,14 @@ end
 -- OctoWoW client can reject Lua filenames created after the game started,
 -- even when /reload successfully picks up edits to files it already knows.
 do
+  local listTotemButtons = {}
+  local listTotemEntries = {}
+  local listTotemCount = 0
+  local listMainEntries = {}
+  local listMainCount = 0
+  local listTaggedEntries = {}
+  local listTaggedCount = 0
   local listRows = {}
-  local listEntries = {}
-  local listEntryCount = 0
   local LIST_HEADER_HEIGHT = 18
   local LIST_PADDING = 4
 
@@ -531,9 +548,15 @@ do
   listDivider:SetPoint("TOPRIGHT", list, "TOPRIGHT", -3, -LIST_HEADER_HEIGHT)
   listDivider:SetHeight(1)
 
+  local listTaggedDivider = list:CreateTexture(nil, "ARTWORK")
+  listTaggedDivider:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+  listTaggedDivider:SetVertexColor(.45, .45, .45, .4)
+  listTaggedDivider:SetHeight(1)
+  listTaggedDivider:Hide()
+
   local listEmpty = list:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   listEmpty:SetPoint("TOP", list, "TOP", 0, -LIST_HEADER_HEIGHT - 5)
-  listEmpty:SetText("No nearby nameplates")
+  listEmpty:SetText("No enemies in combat")
 
   local function ListSettings()
     return Z.config and Z.config.combatlist
@@ -550,6 +573,90 @@ do
     settings.y = tostring(y or -180)
   end)
 
+  local TOTEM_ICONS = {
+    ["strength of earth totem"] = "Interface\\Icons\\Spell_Nature_EarthBindTotem",
+    ["stoneskin totem"] = "Interface\\Icons\\Spell_Nature_StoneSkinTotem",
+    ["stoneclaw totem"] = "Interface\\Icons\\Spell_Nature_StoneClawTotem",
+    ["earthbind totem"] = "Interface\\Icons\\Spell_Nature_StrengthOfEarthTotem02",
+    ["tremor totem"] = "Interface\\Icons\\Spell_Nature_TremorTotem",
+    ["searing totem"] = "Interface\\Icons\\Spell_Fire_SearingTotem",
+    ["magma totem"] = "Interface\\Icons\\Spell_Fire_SelfDestruct",
+    ["fire nova totem"] = "Interface\\Icons\\Spell_Fire_SealOfFire",
+    ["flametongue totem"] = "Interface\\Icons\\Spell_Nature_GuardianWard",
+    ["frost resistance totem"] = "Interface\\Icons\\Spell_FrostResistanceTotem_01",
+    ["healing stream totem"] = "Interface\\Icons\\INV_Spear_04",
+    ["mana spring totem"] = "Interface\\Icons\\Spell_Nature_ManaRegenTotem",
+    ["mana tide totem"] = "Interface\\Icons\\Spell_Frost_SummonWaterElemental",
+    ["poison cleansing totem"] = "Interface\\Icons\\Spell_Nature_PoisonCleansingTotem",
+    ["disease cleansing totem"] = "Interface\\Icons\\Spell_Nature_DiseaseCleansingTotem",
+    ["fire resistance totem"] = "Interface\\Icons\\Spell_FireResistanceTotem_01",
+    ["grounding totem"] = "Interface\\Icons\\Spell_Nature_GroundingTotem",
+    ["windfury totem"] = "Interface\\Icons\\Spell_Nature_Windfury",
+    ["grace of air totem"] = "Interface\\Icons\\Spell_Nature_InvisibilityTotem",
+    ["nature resistance totem"] = "Interface\\Icons\\Spell_Nature_NatureResistanceTotem",
+    ["windwall totem"] = "Interface\\Icons\\Spell_Nature_EarthBind",
+    ["tranquil air totem"] = "Interface\\Icons\\Spell_Nature_Brilliance",
+  }
+
+  local function GetTotemTexture(plate, name)
+    if plate and plate.totemIcon and plate.totemIcon ~= "" then return plate.totemIcon end
+    if plate and plate.totem and plate.totem.icon and plate.totem.icon.GetTexture then
+      local tex = plate.totem.icon:GetTexture()
+      if tex and tex ~= "" then return tex end
+    end
+    if plate and plate.cachedGuid and C_UnitAuras and C_UnitAuras.GetBuffDataByIndex then
+      local aura = C_UnitAuras.GetBuffDataByIndex(plate.cachedGuid, 1)
+      if aura and aura.icon and aura.icon ~= "" then return aura.icon end
+    end
+    local cleanName = string.lower(name or "")
+    cleanName = string.gsub(cleanName, "%s+[%d%a]+$", "")
+    cleanName = string.gsub(cleanName, "^%s+", "")
+    cleanName = string.gsub(cleanName, "%s+$", "")
+    if TOTEM_ICONS[cleanName] then return TOTEM_ICONS[cleanName] end
+    for key, tex in pairs(TOTEM_ICONS) do
+      if string.find(cleanName, key, 1, true) then return tex end
+    end
+    if string.find(cleanName, "heal", 1, true) then return "Interface\\Icons\\INV_Spear_04" end
+    return "Interface\\Icons\\Spell_Nature_EarthBindTotem"
+  end
+
+  local function IsPlateTotem(plate, name)
+    if not plate then return false end
+    if plate.isTotem then return true end
+    if plate.cachedGuid and UnitCreatureTypeID and UnitCreatureTypeID(plate.cachedGuid) == 11 then return true end
+    local unit = plate.unit
+    if unit and UnitCreatureType and UnitCreatureType(unit) == "Totem" then return true end
+    if name and string.find(name, "Totem", 1, true) then return true end
+    return false
+  end
+
+  local function StartTargetAttack()
+    if SlashCmdList and SlashCmdList.STARTATTACK then SlashCmdList.STARTATTACK("")
+    else
+      local inCombat = (PlayerFrame and PlayerFrame.inCombat) or (Z.nameplates and Z.nameplates.combat and Z.nameplates.combat.inCombat)
+      if AttackTarget and UnitCanAttack("player", "target") and not inCombat then AttackTarget() end
+    end
+  end
+
+  local function SendPetAttack(unit)
+    if not UnitExists("pet") or (UnitIsDead and UnitIsDead("pet")) then return end
+    if not unit or not UnitExists(unit) then return end
+    if UnitIsUnit and UnitIsUnit("target", unit) then
+      if PetAttack then PetAttack() end
+      return
+    end
+    local hadTarget = UnitExists("target")
+    TargetUnit(unit)
+    if PetAttack then PetAttack() end
+    if hadTarget then TargetLastTarget() else ClearTarget() end
+  end
+
+  local function HandleRowClick(unit)
+    if not unit or not UnitExists(unit) then return end
+    if arg1 == "RightButton" then SendPetAttack(unit)
+    else TargetUnit(unit); StartTargetAttack() end
+  end
+
   local function ListPlateLevel(plate)
     local level = plate.unit and UnitLevel and UnitLevel(plate.unit)
     if level and level > 0 then return level end
@@ -560,11 +667,12 @@ do
     return 0
   end
 
-  local function ListPlateNearby(plate)
-    local unit = plate and plate.unit
-    return unit and not plate.isCritter and UnitExists(unit)
-      and not (UnitCanAssist and UnitCanAssist("player", unit))
-      and not (UnitIsDead and UnitIsDead(unit))
+  local function TotemCompare(left, right)
+    local leftHeal = string.find(left.name, "heal", 1, true) and 1 or 0
+    local rightHeal = string.find(right.name, "heal", 1, true) and 1 or 0
+    if leftHeal ~= rightHeal then return leftHeal > rightHeal end
+    if left.name ~= right.name then return left.name < right.name end
+    return left.guid < right.guid
   end
 
   local function ListCompare(left, right)
@@ -574,42 +682,74 @@ do
     return left.guid < right.guid
   end
 
+  local function SortEntries(entries, count, compareFunc)
+    for i = 2, count do
+      local entry = entries[i]
+      local index = i - 1
+      while index >= 1 and compareFunc(entry, entries[index]) do
+        entries[index + 1] = entries[index]
+        index = index - 1
+      end
+      entries[index + 1] = entry
+    end
+  end
+
+  local function IsEnemyAttackable(plate, unit)
+    if not unit or not UnitExists(unit) then return false end
+    if UnitIsDead and UnitIsDead(unit) then return false end
+    if plate and plate.isCritter then return false end
+    if plate and plate.isFriendly then return false end
+    if UnitCanAttack and not UnitCanAttack("player", unit) then return false end
+    if UnitIsFriend and UnitIsFriend("player", unit) then return false end
+    if UnitCanAssist and UnitCanAssist("player", unit) then return false end
+    if UnitPlayerOrPetInParty and UnitPlayerOrPetInParty(unit) then return false end
+    if UnitPlayerOrPetInRaid and UnitPlayerOrPetInRaid(unit) then return false end
+    if UnitIsUnit and (UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet")) then return false end
+    if UnitReaction then
+      local reaction = UnitReaction("player", unit)
+      if reaction and reaction >= 5 then return false end
+    end
+    return true
+  end
+
   local function BuildCombatList()
-    for index = listEntryCount, 1, -1 do listEntries[index] = nil end
-    listEntryCount = 0
+    for index = listTotemCount, 1, -1 do listTotemEntries[index] = nil end
+    listTotemCount = 0
+    for index = listMainCount, 1, -1 do listMainEntries[index] = nil end
+    listMainCount = 0
+    for index = listTaggedCount, 1, -1 do listTaggedEntries[index] = nil end
+    listTaggedCount = 0
 
     local visible = Z.nameplates and Z.nameplates.visiblePlates
     if not visible then return 0 end
     for base in pairs(visible) do
       local plate = base and base.nameplate
       if plate and plate.unit and (not base.IsVisible or base:IsVisible()) then
-        local guid = plate.cachedGuid or plate.unit
-        if ListPlateNearby(plate) then
-          local name = plate.name and plate.name.GetText and plate.name:GetText()
-          name = name or (UnitName and UnitName(plate.unit)) or "Unknown"
-          listEntryCount = listEntryCount + 1
-          listEntries[listEntryCount] = {
-            plate = plate, guid = tostring(guid), name = string.lower(name),
-            level = ListPlateLevel(plate),
-            tagged = (plate.taggedByPlayer or plate.taggedByOther) and 1 or 0,
-          }
+        local unit = plate.unit
+        if IsEnemyAttackable(plate, unit) then
+          local guid = plate.cachedGuid or plate.unit
+          local name = (plate.name and plate.name.GetText and plate.name:GetText()) or (UnitName and UnitName(unit)) or "Unknown"
+          if IsPlateTotem(plate, name) then
+            listTotemCount = listTotemCount + 1
+            listTotemEntries[listTotemCount] = { plate=plate, guid=tostring(guid), name=string.lower(name), icon=GetTotemTexture(plate, name), unit=unit }
+          elseif UnitAffectingCombat and UnitAffectingCombat(unit) then
+            local isTaggedOther = plate.taggedByOther or (UnitIsTapped and UnitIsTappedByPlayer and UnitIsTapped(unit) and not UnitIsTappedByPlayer(unit))
+            local entry = { plate=plate, guid=tostring(guid), name=string.lower(name), level=ListPlateLevel(plate), tagged=(plate.taggedByPlayer or plate.taggedByOther) and 1 or 0 }
+            if isTaggedOther then
+              listTaggedCount = listTaggedCount + 1
+              listTaggedEntries[listTaggedCount] = entry
+            else
+              listMainCount = listMainCount + 1
+              listMainEntries[listMainCount] = entry
+            end
+          end
         end
       end
     end
-
-    -- Avoid the old client's stale implicit table length on reused arrays.
-    -- Insertion sorting this small visible-nameplate list also guarantees that
-    -- the comparator never receives a nil entry.
-    for i = 2, listEntryCount do
-      local entry = listEntries[i]
-      local index = i - 1
-      while index >= 1 and ListCompare(entry, listEntries[index]) do
-        listEntries[index + 1] = listEntries[index]
-        index = index - 1
-      end
-      listEntries[index + 1] = entry
-    end
-    return listEntryCount
+    SortEntries(listTotemEntries, listTotemCount, TotemCompare)
+    SortEntries(listMainEntries, listMainCount, ListCompare)
+    SortEntries(listTaggedEntries, listTaggedCount, ListCompare)
+    return listTotemCount + listMainCount + listTaggedCount
   end
 
   local function SetListFont(text, source, fallbackSize)
@@ -621,9 +761,7 @@ do
       size = tonumber(useUnit and Z.config.global.font_unit_size or Z.config.global.font_size)
       flags = Z.config.nameplates.name.fontstyle
     end
-    if font and font ~= "" then
-      text:SetFont(font, math.max(8, tonumber(size) or fallbackSize or 11), flags or "")
-    end
+    if font and font ~= "" then text:SetFont(font, math.max(8, tonumber(size) or fallbackSize or 11), flags or "") end
   end
 
   local function SetListTextColor(destination, source, r, g, b, a)
@@ -637,65 +775,65 @@ do
   local function UpdateListRaidIcon(row, plate)
     local icon = row.raidicon
     local raidIndex
-    if GetRaidTargetIndex and plate.unit then
-      local ok, value = pcall(GetRaidTargetIndex, plate.unit)
-      if ok then raidIndex = tonumber(value) end
-    end
-
-    if raidIndex and raidIndex >= 1 and raidIndex <= 8 then
-      if SetRaidTargetIconTexture then
-        SetRaidTargetIconTexture(icon, raidIndex)
-      else
-        local column = math.mod(raidIndex - 1, 4)
-        local atlasRow = math.floor((raidIndex - 1) / 4)
-        icon:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons")
-        icon:SetTexCoord(column * .25, (column + 1) * .25,
-          atlasRow * .5, (atlasRow + 1) * .5)
-      end
+    if GetRaidTargetIndex and plate.unit then raidIndex = GetRaidTargetIndex(plate.unit) end
+    if not raidIndex and plate.raidIndex then raidIndex = plate.raidIndex end
+    if raidIndex and UnitPopupButtons and UnitPopupButtons["RAID_TARGET_" .. raidIndex] then
+      SetRaidTargetIconTexture(icon, raidIndex)
       icon:Show()
       return
     end
-
-    -- Fall back to the marker texture already resolved on the source plate.
     local source = plate.raidicon
     if source and source.IsShown and source:IsShown() and source.GetTexture and source:GetTexture() then
       icon:SetTexture(source:GetTexture())
-      if source.GetTexCoord then icon:SetTexCoord(source:GetTexCoord()) end
+      if source.GetTexCoord then icon:SetTexCoord(source.GetTexCoord()) end
       icon:Show()
-    else
-      icon:Hide()
-    end
+    else icon:Hide() end
+  end
+
+  local function CreateTotemButton(index)
+    local btn = CreateFrame("Button", nil, list)
+    btn:SetWidth(26); btn:SetHeight(26)
+    btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    btn.icon = btn:CreateTexture(nil, "ARTWORK")
+    btn.icon:SetAllPoints()
+    btn.icon:SetTexCoord(.078, .92, .079, .937)
+    Z.CreateBackdrop(btn, 1)
+    btn:SetScript("OnClick", function() HandleRowClick(this.unit) end)
+    btn:SetScript("OnEnter", function()
+      if this.unit and UnitExists(this.unit) then
+        GameTooltip:SetOwner(this, "ANCHOR_RIGHT")
+        GameTooltip:SetUnit(this.unit)
+        GameTooltip:Show()
+      elseif this.name then
+        GameTooltip:SetOwner(this, "ANCHOR_RIGHT")
+        GameTooltip:SetText(this.name, 1, 1, 1)
+        GameTooltip:Show()
+      end
+    end)
+    btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    listTotemButtons[index] = btn
+    return btn
   end
 
   local function CreateListRow(index)
     local row = CreateFrame("Button", nil, list)
     row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-    row:SetScript("OnClick", function()
-      if this.unit and UnitExists(this.unit) and TargetUnit then TargetUnit(this.unit) end
-    end)
-
+    row:SetScript("OnClick", function() HandleRowClick(this.unit) end)
     row.health = CreateFrame("StatusBar", nil, row)
     row.health:SetFrameLevel(row:GetFrameLevel() + 1)
     row.health:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 20, 2)
     row.health:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -1, 2)
     Z.CreateBackdrop(row.health, 1)
-
     row.raidicon = row.health:CreateTexture(nil, "OVERLAY")
     row.raidicon:SetPoint("RIGHT", row.health, "RIGHT", -1, 0)
-    row.raidicon:SetWidth(12)
-    row.raidicon:SetHeight(12)
-    row.raidicon:SetAlpha(.45)
-    row.raidicon:Hide()
-
+    row.raidicon:SetWidth(12); row.raidicon:SetHeight(12); row.raidicon:SetAlpha(.45); row.raidicon:Hide()
     row.name = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     row.name:SetPoint("BOTTOMLEFT", row.health, "TOPLEFT", 0, 1)
     row.name:SetPoint("BOTTOMRIGHT", row.health, "TOPRIGHT", 0, 1)
     row.name:SetJustifyH("CENTER")
-
     row.level = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     row.level:SetPoint("RIGHT", row.health, "LEFT", -2, 0)
     row.level:SetJustifyH("RIGHT")
-
     row.healthText = row.health:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     row.healthText:SetAllPoints(row.health)
     row.healthText:SetJustifyH("CENTER")
@@ -703,15 +841,13 @@ do
     return row
   end
 
-  local function UpdateListRow(row, entry, index, rowHeight, width)
+  local function UpdateListRow(row, entry, topOffset, rowHeight, width)
     local plate, health = entry.plate, entry.plate.health
     row.unit, row.plate = plate.unit, plate
     row:SetWidth(width - LIST_PADDING * 2)
     row:SetHeight(rowHeight)
     row:ClearAllPoints()
-    row:SetPoint("TOPLEFT", list, "TOPLEFT", LIST_PADDING,
-      -LIST_HEADER_HEIGHT - 2 - (index - 1) * rowHeight)
-
+    row:SetPoint("TOPLEFT", list, "TOPLEFT", LIST_PADDING, topOffset)
     row.health:SetHeight(math.max(5, tonumber(Z.config.nameplates.heighthealth) or 8))
     row.health:SetStatusBarTexture(Z.media[Z.config.nameplates.healthtexture])
     if health and health.GetMinMaxValues and health.GetValue then
@@ -719,85 +855,102 @@ do
       if not maximum or maximum <= (minimum or 0) then minimum, maximum = 0, 1 end
       row.health:SetMinMaxValues(minimum or 0, maximum)
       row.health:SetValue(health:GetValue() or minimum or 0)
-    else
-      row.health:SetMinMaxValues(0, 1)
-      row.health:SetValue(1)
-    end
+    else row.health:SetMinMaxValues(0, 1); row.health:SetValue(1) end
     if health and health.GetStatusBarColor then
       local r, g, b, a = health:GetStatusBarColor()
       row.health:SetStatusBarColor(r or .9, g or .2, b or .3, a or 1)
     end
-
     if health and health.backdrop and health.backdrop.GetBackdropBorderColor then
       local r, g, b, a = health.backdrop:GetBackdropBorderColor()
       row.health.backdrop:SetBackdropBorderColor(r or .2, g or .2, b or .2, a or 1)
-    elseif plate.taggedByPlayer then
-      row.health.backdrop:SetBackdropBorderColor(.35, 1, .05, .75)
-    else
-      row.health.backdrop:SetBackdropBorderColor(Z.GetStringColor(Z.config.appearance.border.color))
-    end
-
+    elseif plate.taggedByPlayer then row.health.backdrop:SetBackdropBorderColor(.35, 1, .05, .75)
+    else row.health.backdrop:SetBackdropBorderColor(Z.GetStringColor(Z.config.appearance.border.color)) end
     SetListFont(row.name, plate.name, 11)
     SetListFont(row.level, plate.level, 10)
     SetListFont(row.healthText, health and health.text, 9)
     row.name:SetText(plate.name and plate.name:GetText() or UnitName(plate.unit) or "Unknown")
-    row.level:SetText(plate.level and plate.level:GetText()
-      or (entry.level == 999 and "??" or entry.level))
+    row.level:SetText(plate.level and plate.level:GetText() or (entry.level == 999 and "??" or entry.level))
     SetListTextColor(row.name, plate.name, 1, 1, 1, 1)
     SetListTextColor(row.level, plate.level, 1, 1, .2, 1)
     UpdateListRaidIcon(row, plate)
-
     local sourceText = health and health.text
     local healthText = sourceText and sourceText.GetText and sourceText:GetText()
     if Z.config.nameplates.showhp == "1" and healthText and healthText ~= "" then
       row.healthText:SetText(healthText)
       SetListTextColor(row.healthText, sourceText, 1, 1, 1, 1)
       row.healthText:Show()
-    else
-      row.healthText:Hide()
-    end
+    else row.healthText:Hide() end
     row:Show()
   end
 
   function list:Refresh()
     local settings = ListSettings()
     if not settings then return end
-    local width = math.max(160, math.max(75, tonumber(Z.config.nameplates.width) or 120)
-      + 20 + LIST_PADDING * 2 + 1)
-    local useUnit = Z.config.nameplates.use_unitfonts == "1"
-    local fontSize = tonumber(useUnit and Z.config.global.font_unit_size
-      or Z.config.global.font_size) or 12
+    local width = math.max(160, math.max(75, tonumber(Z.config.nameplates.width) or 120) + 20 + LIST_PADDING * 2 + 1)
+    local fontSize = tonumber((Z.config.nameplates.use_unitfonts == "1") and Z.config.global.font_unit_size or Z.config.global.font_size) or 12
     local rowHeight = fontSize + math.max(5, tonumber(Z.config.nameplates.heighthealth) or 8) + 5
     local total = BuildCombatList()
-
     self:SetWidth(width)
     listCount:SetText("(" .. total .. ")")
     Z.CreateBackdrop(self, 0)
-
     if settings.collapsed == "1" then
       listCollapse.text:SetText("+")
       listDivider:Hide()
       listEmpty:Hide()
+      listTaggedDivider:Hide()
       self:SetHeight(LIST_HEADER_HEIGHT + 1)
+      for i = 1, table.getn(listTotemButtons) do listTotemButtons[i]:Hide() end
       for i = 1, table.getn(listRows) do listRows[i]:Hide() end
       return
     end
-
     listCollapse.text:SetText("-")
     listDivider:Show()
     if total == 0 then
-      -- An enabled list always leaves a small movable frame on screen.
       self:SetHeight(LIST_HEADER_HEIGHT + 18)
       listEmpty:Show()
-    else
-      self:SetHeight(LIST_HEADER_HEIGHT + 4 + total * rowHeight)
-      listEmpty:Hide()
+      listTaggedDivider:Hide()
+      for i = 1, table.getn(listTotemButtons) do listTotemButtons[i]:Hide() end
+      for i = 1, table.getn(listRows) do listRows[i]:Hide() end
+      return
     end
-
-    for i = 1, total do
-      UpdateListRow(listRows[i] or CreateListRow(i), listEntries[i], i, rowHeight, width)
+    listEmpty:Hide()
+    local currentY = -LIST_HEADER_HEIGHT - 4
+    if listTotemCount > 0 then
+      local totemSize, totemGap = 26, 4
+      local totemStartX = LIST_PADDING + math.max(0, math.floor((width - LIST_PADDING * 2 - (4 * totemSize + 3 * totemGap)) / 2))
+      for i = 1, listTotemCount do
+        local btn = listTotemButtons[i] or CreateTotemButton(i)
+        local col, row = (i - 1) % 4, math.floor((i - 1) / 4)
+        btn:ClearAllPoints()
+        btn:SetPoint("TOPLEFT", self, "TOPLEFT", totemStartX + col * (totemSize + totemGap), currentY - row * (totemSize + totemGap))
+        btn.unit, btn.name = listTotemEntries[i].unit, (listTotemEntries[i].plate.name and listTotemEntries[i].plate.name:GetText() or listTotemEntries[i].name)
+        btn.icon:SetTexture(listTotemEntries[i].icon)
+        btn:Show()
+      end
+      currentY = currentY - (math.ceil(listTotemCount / 4) * (totemSize + totemGap)) - 2
     end
-    for i = total + 1, table.getn(listRows) do listRows[i]:Hide() end
+    for i = listTotemCount + 1, table.getn(listTotemButtons) do listTotemButtons[i]:Hide() end
+    for i = 1, listMainCount do
+      local row = listRows[i] or CreateListRow(i)
+      UpdateListRow(row, listMainEntries[i], currentY - (i - 1) * rowHeight, rowHeight, width)
+    end
+    currentY = currentY - (listMainCount * rowHeight)
+    if listTaggedCount > 0 then
+      if listMainCount > 0 or listTotemCount > 0 then
+        listTaggedDivider:ClearAllPoints()
+        listTaggedDivider:SetPoint("TOPLEFT", self, "TOPLEFT", LIST_PADDING + 4, currentY - 2)
+        listTaggedDivider:SetPoint("TOPRIGHT", self, "TOPRIGHT", -LIST_PADDING - 4, currentY - 2)
+        listTaggedDivider:Show()
+        currentY = currentY - 5
+      else listTaggedDivider:Hide() end
+      for j = 1, listTaggedCount do
+        local row = listRows[listMainCount + j] or CreateListRow(listMainCount + j)
+        UpdateListRow(row, listTaggedEntries[j], currentY - (j - 1) * rowHeight, rowHeight, width)
+      end
+      currentY = currentY - (listTaggedCount * rowHeight)
+    else listTaggedDivider:Hide() end
+    for i = listMainCount + listTaggedCount + 1, table.getn(listRows) do listRows[i]:Hide() end
+    self:SetHeight(-currentY + 4)
   end
 
   listCollapse:SetScript("OnClick", function()
