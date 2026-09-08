@@ -181,8 +181,19 @@ function zNameplates.StartNameplates()
       math.min(1, (tonumber(C.nameplates.los_desaturation) or 100) / 100))
     cfg.distance_unitxp = (cfg.distance_scale or cfg.distance_alpha or cfg.los_fade)
       and type(UnitXP) == "function" or false
+    local desiredRange = math.max(10,
+      math.min(80, tonumber(C.nameplates.nameplate_range) or 41))
     local foundRange, plateRange = pcall(GetCVar, "NameplateRange")
-    cfg.distance_max_range = foundRange and tonumber(plateRange) or 20
+    if foundRange and plateRange ~= nil then
+      if tonumber(plateRange) ~= desiredRange then
+        pcall(SetCVar, "NameplateRange", tostring(desiredRange))
+      end
+      cfg.distance_max_range = desiredRange
+    else
+      -- A stock client has no adjustable NameplateRange CVar. Keep the
+      -- distance effects aligned with its normal range when SuperWoW is absent.
+      cfg.distance_max_range = 20
+    end
     if not cfg.distance_max_range or cfg.distance_max_range <= 8 then
       cfg.distance_max_range = 20
     end

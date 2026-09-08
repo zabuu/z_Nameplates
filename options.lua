@@ -188,6 +188,7 @@ local pages = {
   {
     name = "Distance",
     items = {
+      { "slider", "Extended nameplate range", {"nameplates","nameplate_range"}, 10, 80, 1, " yd" },
       { "check", "Scale nameplates by exact distance", {"nameplates","distance_scale"} },
       { "slider", "Minimum distant size", {"nameplates","distance_min_scale"}, 20, 100, 1 },
       { "check", "Fade nameplates by exact distance", {"nameplates","distance_alpha"} },
@@ -297,6 +298,7 @@ local function CreateWidget(parent, item, index)
     check:SetScript("OnClick", function() SetValue(path, this:GetChecked() and "1" or "0") end)
     widget.control = check
   elseif kind == "slider" then
+    local suffix = item[7] or "%"
     local label = Label(parent, text, x, y)
     label:SetWidth(220)
     local sliderName = "zNameplatesOptionSlider" .. tostring(table.getn(widgets) + 1)
@@ -309,18 +311,19 @@ local function CreateWidget(parent, item, index)
       local low = getglobal(sliderName .. "Low")
       local high = getglobal(sliderName .. "High")
       local title = getglobal(sliderName .. "Text")
-      if low then low:SetText((item[4] or 0) .. "%") end
-      if high then high:SetText((item[5] or 100) .. "%") end
+      if low then low:SetText((item[4] or 0) .. suffix) end
+      if high then high:SetText((item[5] or 100) .. suffix) end
       if title then title:SetText("") end
     end
     slider:SetScript("OnValueChanged", function()
       local value = math.floor((tonumber(arg1) or this:GetValue() or 60) + .5)
-      label:SetText(text .. ": " .. value .. "%")
+      label:SetText(text .. ": " .. value .. suffix)
       if not this.zNameplatesUpdating then SetValue(path, value) end
     end)
     widget.control = slider
     widget.label = label
     widget.text = text
+    widget.suffix = suffix
   elseif kind == "input" then
     Label(parent, text, x, y)
     local input = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
@@ -439,7 +442,7 @@ function frame:Refresh()
         widget.control.zNameplatesUpdating = true
         widget.control:SetValue(amount)
         widget.control.zNameplatesUpdating = nil
-        widget.label:SetText(widget.text .. ": " .. math.floor(amount + .5) .. "%")
+        widget.label:SetText(widget.text .. ": " .. math.floor(amount + .5) .. widget.suffix)
       elseif widget.kind == "input" and not widget.control.zNameplatesEditing then widget.control:SetText(value or "")
       elseif widget.kind == "select" then
         local label = tostring(value or "")

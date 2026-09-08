@@ -66,6 +66,7 @@ local defaults = {
     disable_hostile_in_friendly = "0", disable_friendly_in_friendly = "0",
     use_unitfonts = "1", overlap_enemy = "0", overlap_friendly = "1",
     overlap_friendly_area = "1", overlap_combat = "1",
+    nameplate_range = "41",
     distance_scale = "1", distance_min_scale = "58",
     distance_alpha = "1", distance_min_alpha = "37", los_fade = "1",
     los_desaturation = "27",
