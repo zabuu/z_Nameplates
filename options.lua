@@ -72,6 +72,11 @@ local pages = {
       { "check", "Never overlap plates in combat with me", {"nameplates","overlap_combat"} },
       { "check", "Replace totems with icons", {"nameplates","totemicons"} },
       { "check", "Show guild/sub-name", {"nameplates","showguildname"} },
+      { "check", "Show dummy nameplate cluster", {"nameplates","dummy_preview"} },
+      { "slider", "Dummy nameplates", {"nameplates","dummy_count"}, 1, 30, 1, " plates" },
+      { "button", "Dummy Damage!", nil, function()
+          if Z.PulseDummyDamage then Z.PulseDummyDamage() end
+        end },
     },
   },
   {
@@ -297,6 +302,15 @@ local function CreateWidget(parent, item, index)
     label:SetWidth(300)
     check:SetScript("OnClick", function() SetValue(path, this:GetChecked() and "1" or "0") end)
     widget.control = check
+  elseif kind == "button" then
+    local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    button:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y + 2)
+    button:SetWidth(155); button:SetHeight(24)
+    button:SetText(text)
+    button:SetScript("OnClick", function()
+      if type(extra) == "function" then extra() end
+    end)
+    widget.control = button
   elseif kind == "slider" then
     local suffix = item[7] or "%"
     local label = Label(parent, text, x, y)
