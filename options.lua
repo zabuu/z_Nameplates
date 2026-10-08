@@ -53,14 +53,14 @@ local pages = {
       { "check", "Hide Blizzard XP floating text", {"nameplates","hide_blizzard_xp"} },
       { "check", "Disable hostile plates in friendly zones", {"nameplates","disable_hostile_in_friendly"} },
       { "check", "Disable friendly plates in friendly zones", {"nameplates","disable_friendly_in_friendly"} },
-      { "input", "Vertical offset", {"nameplates","vertical_offset"} },
-      { "input", "Inactive alpha (0-1)", {"nameplates","notargalpha"} },
+      { "slider", "Vertical offset", {"nameplates","vertical_offset"}, -100, 100, 1, " px" },
+      { "slider", "Inactive alpha", {"nameplates","notargalpha"}, 0, 1, .05, "", 2 },
       { "check", "Glow around target", {"nameplates","targetglow"} },
       { "color", "Target glow color", {"nameplates","glowcolor"} },
       { "check", "Red names while in combat", {"nameplates","namefightcolor"} },
       { "check", "Zoom target nameplate", {"nameplates","targetzoom"} },
-      { "input", "Target zoom factor", {"nameplates","targetzoomval"} },
-      { "input", "Nameplate width", {"nameplates","width"} },
+      { "slider", "Target zoom factor", {"nameplates","targetzoomval"}, 0, 2, .05, "", 2 },
+      { "slider", "Nameplate width", {"nameplates","width"}, 40, 300, 1, " px" },
       { "check", "Enemy player class colors", {"nameplates","enemyclassc"} },
       { "check", "Friendly player class colors", {"nameplates","friendclassc"} },
       { "check", "Class-color friendly names", {"nameplates","friendclassnamec"} },
@@ -82,8 +82,8 @@ local pages = {
   {
     name = "Health",
     items = {
-      { "input", "Healthbar vertical offset", {"nameplates","health","offset"} },
-      { "input", "Healthbar height", {"nameplates","heighthealth"} },
+      { "slider", "Healthbar vertical offset", {"nameplates","health","offset"}, -50, 50, 1, " px" },
+      { "slider", "Healthbar height", {"nameplates","heighthealth"}, 1, 40, 1, " px" },
       { "select", "Healthbar texture", {"nameplates","healthtexture"}, textures },
       { "check", "Show health text", {"nameplates","showhp"} },
       { "select", "Health text alignment", {"nameplates","hptextpos"}, alignments },
@@ -116,18 +116,18 @@ local pages = {
       { "check", "Enable castbars", {"nameplates","showcastbar"} },
       { "check", "Only show target castbar", {"nameplates","targetcastbar"} },
       { "check", "Show spell name", {"nameplates","spellname"} },
-      { "input", "Castbar height", {"nameplates","heightcast"} },
+      { "slider", "Castbar height", {"nameplates","heightcast"}, 1, 40, 1, " px" },
       { "select", "Castbar texture", {"appearance","castbar","texture"}, textures },
       { "color", "Cast color", {"appearance","castbar","castbarcolor"} },
       { "color", "Channel color", {"appearance","castbar","channelcolor"} },
-      { "input", "Castbar decimal places", {"unitframes","castbardecimals"} },
+      { "slider", "Castbar decimal places", {"unitframes","castbardecimals"}, 0, 3, 1, "" },
       { "check", "Enable debuffs", {"nameplates","showdebuffs"} },
       { "check", "Show debuffs on hostile units", {"nameplates","showdebuffs_hostile"} },
       { "check", "Show debuffs on friendly units", {"nameplates","showdebuffs_friendly"} },
       { "check", "Only show your debuffs", {"nameplates","owndebuffs"} },
       { "select", "Debuff position", {"nameplates","debuffs","position"}, {{"Above","TOP"},{"Below","BOTTOM"}} },
-      { "input", "Debuff icon offset", {"nameplates","debuffoffset"} },
-      { "input", "Debuff icon size", {"nameplates","debuffsize"} },
+      { "slider", "Debuff icon offset", {"nameplates","debuffoffset"}, -50, 50, 1, " px" },
+      { "slider", "Debuff icon size", {"nameplates","debuffsize"}, 6, 64, 1, " px" },
       { "check", "Show debuff stacks", {"nameplates","debuffs","showstacks"} },
       { "check", "Enable debuff timers", {"nameplates","debufftimers"} },
       { "check", "Show timer text", {"nameplates","debufftext"} },
@@ -135,41 +135,83 @@ local pages = {
       { "select", "Debuff filter mode", {"nameplates","debuffs","filter"}, filters },
       { "input", "Blacklist (spell names, separated by #)", {"nameplates","debuffs","blacklist"}, 185 },
       { "input", "Whitelist (spell names, separated by #)", {"nameplates","debuffs","whitelist"}, 185 },
-      { "input", "Cooldown text size", {"appearance","cd","font_size"} },
       { "check", "Dynamic cooldown text size", {"appearance","cd","dynamicsize"} },
+    },
+  },
+  {
+    name = "Text",
+    items = {
+      { "check", "Use separate unit font", {"nameplates","use_unitfonts"} },
+      { "select", "Default font", {"global","font_default"}, fonts, "font" },
+      { "slider", "Default font size", {"global","font_size"}, 6, 40, 1, " pt" },
+      { "select", "Unit font", {"global","font_unit"}, fonts, "font" },
+      { "slider", "Unit font size", {"global","font_unit_size"}, 6, 40, 1, " pt" },
+      { "slider", "Hostile font size", {"nameplates","name","fontsize"}, 6, 40, 1, " pt" },
+      { "slider", "Friendly font size", {"nameplates","name","fontsize_friendly"}, 6, 40, 1, " pt" },
+      { "select", "Hostile font style", {"nameplates","name","fontstyle"}, fontStyles },
+      { "select", "Friendly font style", {"nameplates","name","fontstyle_friendly"}, fontStyles },
+      { "check", "Override font style in combat", {"nameplates","name","fontstyle_combat_enabled"} },
+      { "select", "Combat font style", {"nameplates","name","fontstyle_combat"}, fontStyles },
+      { "select", "Cooldown font", {"appearance","cd","font"}, fonts, "font" },
+      { "slider", "Cooldown text size", {"appearance","cd","font_size"}, 6, 48, 1, " pt" },
+      { "check", "Abbreviate long names", {"unitframes","abbrevname"} },
+      { "select", "Number abbreviation", {"unitframes","abbrevnum"}, {{"Off","0"},{"Precise","1"},{"Compact","2"}} },
+      { "preview", "Hostile Text Preview", nil, "hostile" },
+      { "preview", "Friendly Text Preview", nil, "friendly" },
+      { "preview", "Combat Text Preview", nil, "combat" },
     },
   },
   {
     name = "Appearance",
     items = {
-      { "check", "Use separate unit font", {"nameplates","use_unitfonts"} },
-      { "select", "Default font", {"global","font_default"}, fonts },
-      { "input", "Default font size", {"global","font_size"} },
-      { "select", "Unit font", {"global","font_unit"}, fonts },
-      { "input", "Unit font size", {"global","font_unit_size"} },
-      { "input", "Hostile font size", {"nameplates","name","fontsize"} },
-      { "input", "Friendly font size", {"nameplates","name","fontsize_friendly"} },
-      { "select", "Hostile font style", {"nameplates","name","fontstyle"}, fontStyles },
-      { "select", "Friendly font style", {"nameplates","name","fontstyle_friendly"}, fontStyles },
-      { "select", "Cooldown font", {"appearance","cd","font"}, fonts },
-      { "check", "Abbreviate long names", {"unitframes","abbrevname"} },
-      { "select", "Number abbreviation", {"unitframes","abbrevnum"}, {{"Off","0"},{"Precise","1"},{"Compact","2"}} },
       { "check", "Use Blizzard raid icons", {"unitframes","blizzard_raidicons"} },
       { "select", "Raid icon position", {"nameplates","raidiconpos"}, positions },
-      { "input", "Raid icon X offset", {"nameplates","raidiconoffx"} },
-      { "input", "Raid icon Y offset", {"nameplates","raidiconoffy"} },
-      { "input", "Raid icon size", {"nameplates","raidiconsize"} },
+      { "slider", "Raid icon X offset", {"nameplates","raidiconoffx"}, -100, 100, 1, " px" },
+      { "slider", "Raid icon Y offset", {"nameplates","raidiconoffy"}, -100, 100, 1, " px" },
+      { "slider", "Raid icon size", {"nameplates","raidiconsize"}, 6, 64, 1, " px" },
       { "check", "Show quest-giver icons", {"nameplates","questicons"} },
-      { "input", "Quest icon size", {"nameplates","questiconsize"} },
-      { "input", "Quest icon vertical offset", {"nameplates","questiconoffset"} },
+      { "check", "Show unknown flight path icons", {"nameplates","flighticons"} },
+      { "slider", "Quest icon size", {"nameplates","questiconsize"}, 8, 64, 1, " px" },
+      { "slider", "Quest icon vertical offset", {"nameplates","questiconoffset"}, -100, 100, 1, " px" },
       { "color", "Border color", {"appearance","border","color"} },
       { "color", "Border background", {"appearance","border","background"} },
-      { "input", "Default border size", {"appearance","border","default"} },
-      { "input", "Nameplate border size (-1 = default)", {"appearance","border","nameplates"} },
+      { "slider", "Default border size", {"appearance","border","default"}, 0, 8, 1, " px" },
+      { "slider", "Nameplate border size", {"appearance","border","nameplates"}, -1, 8, 1, " px" },
       { "check", "Pixel-perfect borders", {"appearance","border","pixelperfect"} },
       { "check", "HiDPI border correction", {"appearance","border","hidpi"} },
-      { "preview", "Hostile Text Preview", nil, "hostile" },
-      { "preview", "Friendly Text Preview", nil, "friendly" },
+      { "select", "Level text relative to", {"nameplates","levelreference"}, {{"Automatic","AUTO"},{"Name","NAME"},{"Health bar","HEALTH"}} },
+      { "select", "Level text position", {"nameplates","levelposition"}, {{"Left","LEFT"},{"Right","RIGHT"},{"Above","TOP"},{"Below","BOTTOM"}} },
+      { "slider", "Level text X offset", {"nameplates","levelx"}, -100, 100, 1, " px" },
+      { "slider", "Level text Y offset", {"nameplates","levely"}, -100, 100, 1, " px" },
+    },
+  },
+  {
+    name = "Chat",
+    items = {
+      { "check", "Enable nameplate chat", {"platechat","enabled"} },
+      { "check", "Show chat when player nameplates are hidden", {"platechat","show_without_plate"} },
+      { "select", "Chat position", {"platechat","position"}, {{"Beside name (right)","RIGHT"},{"Beside name (left)","LEFT"},{"Above name","TOP"},{"Below name","BOTTOM"}} },
+      { "slider", "Chat X offset", {"platechat","x"}, -200, 200, 1, " px" },
+      { "slider", "Chat Y offset", {"platechat","y"}, -200, 200, 1, " px" },
+      { "slider", "Chat duration", {"platechat","duration"}, 1, 30, .1, " sec", 1 },
+      { "slider", "Fade duration", {"platechat","fade"}, 0, 5, .1, " sec", 1 },
+      { "slider", "Chat scale", {"platechat","scale"}, .5, 2, .01, "", 2 },
+      { "slider", "Chat font size", {"platechat","fontsize"}, 6, 30, 1, " pt" },
+      { "slider", "Chat text width", {"platechat","width"}, 80, 400, 1, " px" },
+      { "slider", "Chat opacity", {"platechat","opacity"}, .1, 1, .05, "", 2 },
+      { "color", "Chat background colour", {"platechat","background_color"}, nil, "rgb" },
+      { "slider", "Chat background opacity", {"platechat","background_opacity"}, 0, 1, .01, "", 2 },
+      { "select", "Chat font style", {"platechat","fontstyle"}, fontStyles },
+      { "check", "Show say", {"platechat","say"} },
+      { "check", "Show yell", {"platechat","yell"} },
+      { "check", "Show party chat", {"platechat","party"} },
+      { "check", "Show raid chat", {"platechat","raid"} },
+      { "check", "Show guild / officer chat", {"platechat","guild"} },
+      { "check", "Show whispers", {"platechat","whisper"} },
+      { "check", "Show battleground chat", {"platechat","battleground"} },
+      { "check", "Show instance chat", {"platechat","instance"} },
+      { "check", "Show emotes", {"platechat","emote"} },
+      { "check", "Show NPC speech", {"platechat","npc"} },
     },
   },
   {
@@ -193,9 +235,13 @@ local pages = {
   {
     name = "Distance",
     items = {
+      { "check", "Cluster similar enemies above 30 plates", {"nameplates","cluster_enabled"} },
+      { "slider", "Cluster health-band width", {"nameplates","cluster_health_band"}, 10, 20, 1, "%" },
+      { "check", "Smooth nameplate transitions", {"nameplates","smooth_transitions"} },
+      { "slider", "Transition duration", {"nameplates","transition_duration"}, .05, .5, .01, " sec", 2 },
       { "slider", "Extended nameplate range", {"nameplates","nameplate_range"}, 10, 80, 1, " yd" },
       { "check", "Scale nameplates by exact distance", {"nameplates","distance_scale"} },
-      { "slider", "Minimum distant size", {"nameplates","distance_min_scale"}, 20, 100, 1 },
+      { "slider", "Minimum distant size", {"nameplates","distance_min_scale"}, 20, 100, .01, "%", 2 },
       { "check", "Fade nameplates by exact distance", {"nameplates","distance_alpha"} },
       { "slider", "Minimum distant opacity", {"nameplates","distance_min_alpha"}, 20, 100, 1 },
       { "check", "Fade and desaturate out-of-sight plates", {"nameplates","los_fade"} },
@@ -206,11 +252,11 @@ local pages = {
     name = "Advanced",
     items = {
       { "check", "Right-click mouselook/attack", {"nameplates","rightclick"} },
-      { "input", "Right-click threshold", {"nameplates","clickthreshold"} },
-      { "input", "Normal update rate (updates/sec)", {"throttle","nameplates"} },
-      { "input", "Target update rate", {"throttle","nameplates_target"} },
-      { "input", "Castbar update rate", {"throttle","nameplates_castbar"} },
-      { "input", "Mass-nameplate update rate", {"throttle","nameplates_mass"} },
+      { "slider", "Right-click threshold", {"nameplates","clickthreshold"}, .1, 2, .05, " sec", 2 },
+      { "slider", "Normal update rate", {"throttle","nameplates"}, 1, 60, 1, "/sec" },
+      { "slider", "Target update rate", {"throttle","nameplates_target"}, 1, 100, 1, "/sec" },
+      { "slider", "Castbar update rate", {"throttle","nameplates_castbar"}, 1, 200, 1, "/sec" },
+      { "slider", "Mass-nameplate update rate", {"throttle","nameplates_mass"}, 1, 60, 1, "/sec" },
     },
   },
 }
@@ -277,9 +323,90 @@ local function Label(parent, text, x, y)
   return label
 end
 
-local function ApplyColor(path, oldValue)
+local dropdown = CreateFrame("Frame", "zNameplatesOptionDropdown", frame)
+dropdown:SetFrameStrata("TOOLTIP")
+dropdown:SetFrameLevel(frame:GetFrameLevel() + 30)
+dropdown:SetWidth(180)
+dropdown:SetBackdrop({
+  bgFile = "Interface\\BUTTONS\\WHITE8X8",
+  edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+  tile = true, tileSize = 8, edgeSize = 12,
+  insets = { left = 3, right = 3, top = 3, bottom = 3 },
+})
+dropdown:SetBackdropColor(.025, .025, .025, .97)
+dropdown:SetBackdropBorderColor(.65, .65, .65, 1)
+dropdown:EnableMouse(true)
+dropdown:Hide()
+local dropdownRows = {}
+
+local function DropdownRowClick()
+  if dropdown.path and this.value ~= nil then SetValue(dropdown.path, this.value) end
+  dropdown:Hide()
+end
+
+local function OpenDropdown(widget)
+  if dropdown:IsShown() and dropdown.owner == widget.control then
+    dropdown:Hide()
+    return
+  end
+
+  local values = widget.values or {}
+  local count = table.getn(values)
+  local height = count * 22 + 8
+  dropdown.owner = widget.control
+  dropdown.path = widget.path
+  dropdown:SetHeight(height)
+  dropdown:ClearAllPoints()
+  local bottom = widget.control.GetBottom and widget.control:GetBottom()
+  if bottom and bottom < height + 15 then
+    dropdown:SetPoint("BOTTOMRIGHT", widget.control, "TOPRIGHT", 0, 2)
+  else
+    dropdown:SetPoint("TOPRIGHT", widget.control, "BOTTOMRIGHT", 0, -2)
+  end
+
+  for i = 1, count do
+    local row = dropdownRows[i]
+    if not row then
+      row = CreateFrame("Button", nil, dropdown)
+      row:SetHeight(22)
+      row:SetPoint("TOPLEFT", dropdown, "TOPLEFT", 4, -4 - (i - 1) * 22)
+      row:SetPoint("TOPRIGHT", dropdown, "TOPRIGHT", -4, -4 - (i - 1) * 22)
+      row.highlight = row:CreateTexture(nil, "BACKGROUND")
+      row.highlight:SetAllPoints(row)
+      row.highlight:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+      row.highlight:SetVertexColor(.8, .58, .12, .18)
+      row.highlight:Hide()
+      row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+      row.text:SetPoint("LEFT", row, "LEFT", 7, 0)
+      row.text:SetPoint("RIGHT", row, "RIGHT", -7, 0)
+      row.text:SetJustifyH("LEFT")
+      row:SetScript("OnEnter", function() this.highlight:Show() end)
+      row:SetScript("OnLeave", function() this.highlight:Hide() end)
+      row:SetScript("OnClick", DropdownRowClick)
+      dropdownRows[i] = row
+    end
+    row.value = values[i][2]
+    row.text:SetText(values[i][1])
+    row.text:SetTextColor(values[i][2] == GetValue(widget.path) and 1 or .9,
+      values[i][2] == GetValue(widget.path) and .78 or .9,
+      values[i][2] == GetValue(widget.path) and .2 or .9, 1)
+    if widget.fontSelect then
+      row.text:SetFont(values[i][2], 12, "")
+    else
+      if row.text.SetFontObject then row.text:SetFontObject(GameFontHighlightSmall)
+      else row.text:SetFont(Z.font_default, 11, "") end
+    end
+    row:Show()
+  end
+  for i = count + 1, table.getn(dropdownRows) do dropdownRows[i]:Hide() end
+  dropdown:Show()
+end
+
+frame:SetScript("OnHide", function() dropdown:Hide() end)
+
+local function ApplyColor(path, oldValue, rgbOnly)
   local r, g, b = ColorPickerFrame:GetColorRGB()
-  local a = 1 - (ColorPickerFrame.opacity or 0)
+  local a = rgbOnly and 1 or 1 - (ColorPickerFrame.opacity or 0)
   if oldValue and not r then SetValue(path, oldValue) else SetValue(path, r .. "," .. g .. "," .. b .. "," .. a) end
 end
 
@@ -313,6 +440,8 @@ local function CreateWidget(parent, item, index)
     widget.control = button
   elseif kind == "slider" then
     local suffix = item[7] or "%"
+    local decimals = item[8] or 0
+    local multiplier = 10 ^ decimals
     local label = Label(parent, text, x, y)
     label:SetWidth(220)
     local sliderName = "zNameplatesOptionSlider" .. tostring(table.getn(widgets) + 1)
@@ -330,14 +459,20 @@ local function CreateWidget(parent, item, index)
       if title then title:SetText("") end
     end
     slider:SetScript("OnValueChanged", function()
-      local value = math.floor((tonumber(arg1) or this:GetValue() or 60) + .5)
-      label:SetText(text .. ": " .. value .. suffix)
+      local raw = tonumber(arg1) or this:GetValue() or 0
+      local step = item[6] or 1
+      local value = math.floor(raw / step + .5) * step
+      value = math.floor(value * multiplier + .5) / multiplier
+      local shown = decimals > 0 and string.format("%." .. decimals .. "f", value)
+        or tostring(math.floor(value + .5))
+      label:SetText(text .. ": " .. shown .. suffix)
       if not this.zNameplatesUpdating then SetValue(path, value) end
     end)
     widget.control = slider
     widget.label = label
     widget.text = text
     widget.suffix = suffix
+    widget.decimals = decimals
   elseif kind == "input" then
     Label(parent, text, x, y)
     local input = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
@@ -360,32 +495,35 @@ local function CreateWidget(parent, item, index)
     local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
     button:SetPoint("TOPRIGHT", parent, "TOPLEFT", x + 350, y + 3)
     button:SetWidth(150); button:SetHeight(23)
-    button:SetScript("OnClick", function()
-      local values = item[4]
-      local current, found = GetValue(path), 1
-      for i = 1, table.getn(values) do if values[i][2] == current then found = i end end
-      found = IsShiftKeyDown() and found - 1 or found + 1
-      if found < 1 then found = table.getn(values) elseif found > table.getn(values) then found = 1 end
-      SetValue(path, values[found][2])
-    end)
+    local arrow = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    arrow:SetPoint("RIGHT", button, "RIGHT", -8, 0)
+    arrow:SetText("v")
     widget.values = item[4]
     widget.control = button
+    widget.fontSelect = item[5] == "font"
+    button:SetScript("OnClick", function() OpenDropdown(widget) end)
   elseif kind == "color" then
     Label(parent, text, x, y)
     local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
     button:SetPoint("TOPRIGHT", parent, "TOPLEFT", x + 350, y + 3)
-    button:SetWidth(105); button:SetHeight(23)
-    button:SetText("Choose")
-    local swatch = button:CreateTexture(nil, "ARTWORK")
-    swatch:SetPoint("LEFT", button, "LEFT", 7, 0); swatch:SetWidth(13); swatch:SetHeight(13)
+    button:SetWidth(150); button:SetHeight(23)
+    button:SetText("   Edit colour")
+    local swatchBorder = button:CreateTexture(nil, "ARTWORK")
+    swatchBorder:SetPoint("LEFT", button, "LEFT", 7, 0)
+    swatchBorder:SetWidth(20); swatchBorder:SetHeight(20)
+    swatchBorder:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+    swatchBorder:SetVertexColor(.08, .08, .08, 1)
+    local swatch = button:CreateTexture(nil, "OVERLAY")
+    swatch:SetPoint("CENTER", swatchBorder, "CENTER", 0, 0); swatch:SetWidth(16); swatch:SetHeight(16)
     swatch:SetTexture("Interface\\BUTTONS\\WHITE8X8")
     button:SetScript("OnClick", function()
       local oldValue = GetValue(path)
       local r, g, b, a = Z.GetStringColor(oldValue)
-      ColorPickerFrame.func = function() ApplyColor(path) end
-      ColorPickerFrame.opacityFunc = function() ApplyColor(path) end
+      local rgbOnly = item[5] == "rgb"
+      ColorPickerFrame.func = function() ApplyColor(path, nil, rgbOnly) end
+      ColorPickerFrame.opacityFunc = not rgbOnly and function() ApplyColor(path) end or nil
       ColorPickerFrame.cancelFunc = function() SetValue(path, oldValue) end
-      ColorPickerFrame.hasOpacity = true
+      ColorPickerFrame.hasOpacity = not rgbOnly
       ColorPickerFrame.opacity = 1 - (tonumber(a) or 1)
       ColorPickerFrame:SetColorRGB(tonumber(r) or 1, tonumber(g) or 1, tonumber(b) or 1)
       ColorPickerFrame:Show()
@@ -404,6 +542,7 @@ local function CreateWidget(parent, item, index)
 end
 
 local function ShowTab(index)
+  dropdown:Hide()
   activeTab = index
   for i = 1, table.getn(tabFrames) do
     if i == index then tabFrames[i]:Show(); tabButtons[i]:Disable()
@@ -456,12 +595,18 @@ function frame:Refresh()
         widget.control.zNameplatesUpdating = true
         widget.control:SetValue(amount)
         widget.control.zNameplatesUpdating = nil
-        widget.label:SetText(widget.text .. ": " .. math.floor(amount + .5) .. widget.suffix)
+        local shown = widget.decimals > 0 and string.format("%." .. widget.decimals .. "f", amount)
+          or tostring(math.floor(amount + .5))
+        widget.label:SetText(widget.text .. ": " .. shown .. widget.suffix)
       elseif widget.kind == "input" and not widget.control.zNameplatesEditing then widget.control:SetText(value or "")
       elseif widget.kind == "select" then
         local label = tostring(value or "")
         for j = 1, table.getn(widget.values) do if widget.values[j][2] == value then label = widget.values[j][1] end end
         widget.control:SetText(label)
+        if widget.fontSelect and widget.control.GetFontString then
+          local selection = widget.control:GetFontString()
+          if selection then selection:SetFont(value, 11, "") end
+        end
       elseif widget.kind == "color" then
         local r, g, b = Z.GetStringColor(value)
         widget.swatch:SetVertexColor(tonumber(r) or 1, tonumber(g) or 1, tonumber(b) or 1)
@@ -470,16 +615,20 @@ function frame:Refresh()
       local useUnit = Z.config.nameplates.use_unitfonts == "1"
       local font = useUnit and Z.font_unit or Z.font_default
       local isFriendly = widget.extra == "friendly"
+      local isCombat = widget.extra == "combat"
       local customSize = isFriendly
         and (Z.config.nameplates.name.fontsize_friendly or Z.config.nameplates.name.fontsize)
         or Z.config.nameplates.name.fontsize
       local size = tonumber(customSize)
         or tonumber(useUnit and Z.config.global.font_unit_size or Z.config.global.font_size)
         or 10
-      local style = isFriendly
-        and (Z.config.nameplates.name.fontstyle_friendly or Z.config.nameplates.name.fontstyle or "")
-        or (Z.config.nameplates.name.fontstyle or "")
+      local style = isCombat
+        and (Z.config.nameplates.name.fontstyle_combat or Z.config.nameplates.name.fontstyle or "")
+        or (isFriendly
+          and (Z.config.nameplates.name.fontstyle_friendly or Z.config.nameplates.name.fontstyle or "")
+          or (Z.config.nameplates.name.fontstyle or ""))
       widget.control:SetFont(font, math.max(10, size + 2), style)
+      widget.control:SetAlpha(isCombat and Z.config.nameplates.name.fontstyle_combat_enabled ~= "1" and .45 or 1)
     end
   end
 end
@@ -772,6 +921,9 @@ do
   local function SetListFont(text, source, fallbackSize)
     local font, size, flags
     if source and source.GetFont then font, size, flags = source:GetFont() end
+    -- Plate labels use 4x glyphs on a quarter-scale surface. List rows are
+    -- unscaled: copy the logical text size, not that backing font size.
+    if source and source.zSmoothFrame and tonumber(size) then size = tonumber(size) / 4 end
     if not font then
       local useUnit = Z.config.nameplates.use_unitfonts == "1"
       font = useUnit and Z.font_unit or Z.font_default
@@ -794,8 +946,15 @@ do
     local raidIndex
     if GetRaidTargetIndex and plate.unit then raidIndex = GetRaidTargetIndex(plate.unit) end
     if not raidIndex and plate.raidIndex then raidIndex = plate.raidIndex end
-    if raidIndex and UnitPopupButtons and UnitPopupButtons["RAID_TARGET_" .. raidIndex] then
-      SetRaidTargetIconTexture(icon, raidIndex)
+    if raidIndex then
+      icon:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons")
+      if SetRaidTargetIconTexture then
+        SetRaidTargetIconTexture(icon, raidIndex)
+      else
+        local left = math.mod(raidIndex - 1, 4) * .25
+        local top = math.floor((raidIndex - 1) / 4) * .25
+        icon:SetTexCoord(left, left + .25, top, top + .25)
+      end
       icon:Show()
       return
     end
@@ -841,12 +1000,12 @@ do
     row.health:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 20, 2)
     row.health:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -1, 2)
     Z.CreateBackdrop(row.health, 1)
-    row.raidicon = row.health:CreateTexture(nil, "OVERLAY")
-    row.raidicon:SetPoint("RIGHT", row.health, "RIGHT", -1, 0)
-    row.raidicon:SetWidth(12); row.raidicon:SetHeight(12); row.raidicon:SetAlpha(.45); row.raidicon:Hide()
+    row.raidicon = row:CreateTexture(nil, "OVERLAY")
+    row.raidicon:SetPoint("BOTTOMRIGHT", row.health, "TOPRIGHT", -1, 1)
+    row.raidicon:SetWidth(10); row.raidicon:SetHeight(10); row.raidicon:SetAlpha(.55); row.raidicon:Hide()
     row.name = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     row.name:SetPoint("BOTTOMLEFT", row.health, "TOPLEFT", 0, 1)
-    row.name:SetPoint("BOTTOMRIGHT", row.health, "TOPRIGHT", 0, 1)
+    row.name:SetPoint("BOTTOMRIGHT", row.health, "TOPRIGHT", -13, 1)
     row.name:SetJustifyH("CENTER")
     row.level = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     row.level:SetPoint("RIGHT", row.health, "LEFT", -2, 0)

@@ -61,6 +61,15 @@ local defaults = {
     point = "TOPLEFT", relativePoint = "TOPLEFT",
     x = "1223.77657471", y = "-4.8518200319566",
   },
+  platechat = {
+    enabled = "0", show_without_plate = "0", position = "RIGHT", x = "6", y = "0",
+    duration = "8", fade = "1", scale = "1", fontsize = "12",
+    width = "220", opacity = "1", fontstyle = "OUTLINE",
+    background_color = ".04,.04,.04,1", background_opacity = ".35",
+    say = "1", yell = "1", party = "1", raid = "1", guild = "1",
+    whisper = "1", emote = "1", npc = "1",
+    battleground = "1", instance = "1",
+  },
   nameplates = {
     showhostile = "1", showfriendly = "1",
     disable_hostile_in_friendly = "0", disable_friendly_in_friendly = "0",
@@ -69,6 +78,8 @@ local defaults = {
     dummy_preview = "0", dummy_count = "5", dummy_x = "-500", dummy_y = "120",
     nameplate_range = "41",
     distance_scale = "1", distance_min_scale = "58",
+    smooth_transitions = "1", transition_duration = ".12",
+    cluster_enabled = "1", cluster_health_band = "20",
     distance_alpha = "1", distance_min_alpha = "37", los_fade = "1",
     los_desaturation = "27",
     verticalhealth = "0", vertical_offset = "0",
@@ -77,7 +88,8 @@ local defaults = {
     owndebuffs = "0", clickthrough = "1", rightclick = "1", clickthreshold = "0.5",
     enemyclassc = "1", friendclassc = "1", friendclassnamec = "1",
     raidiconsize = "16", raidiconpos = "CENTER", raidiconoffx = "0", raidiconoffy = "-5",
-    questicons = "1", questiconsize = "26", questiconoffset = "0",
+    levelreference = "AUTO", levelposition = "LEFT", levelx = "0", levely = "0",
+    questicons = "1", questiconsize = "26", questiconoffset = "0", flighticons = "1",
     fullhealth = "0", target = "0", namefightcolor = "1",
     enemynpc = "0", enemyplayer = "0", neutralnpc = "0",
     friendlynpc = "1", friendlyplayer = "1", critters = "1", totems = "1",
@@ -102,6 +114,8 @@ local defaults = {
     name = {
       fontstyle = "OUTLINE",
       fontstyle_friendly = "OUTLINE",
+      fontstyle_combat_enabled = "0",
+      fontstyle_combat = "THICKOUTLINE",
       fontsize = "10",
       fontsize_friendly = "10",
     },
@@ -168,6 +182,12 @@ local function MigrateNameplateSettings(config)
     end
     if not nameplates.name.fontsize_friendly or nameplates.name.fontsize_friendly == "" then
       nameplates.name.fontsize_friendly = nameplates.name.fontsize or currentUnitSize
+    end
+    if nameplates.name.fontstyle_combat_enabled == nil then
+      nameplates.name.fontstyle_combat_enabled = "0"
+    end
+    if not nameplates.name.fontstyle_combat then
+      nameplates.name.fontstyle_combat = "THICKOUTLINE"
     end
   end
 end
@@ -293,7 +313,31 @@ end
 function Z.SetSmoothFontString(text, font, size, flags)
   if not text or not font then return end
   size = math.max(1, tonumber(size) or 12)
-  if text.SetTextHeight then
+  if text.GetParent and text.SetParent and text.GetPoint then
+    if not text.zSmoothFrame then
+      local parent = text:GetParent()
+      local surface = CreateFrame("Frame", nil, parent)
+      surface:SetAllPoints(parent)
+      surface:SetScale(.25)
+      surface:EnableMouse(false)
+      text.zSmoothFrame = surface
+      local setParent, setPoint = text.SetParent, text.SetPoint
+      text.SetParent = function(self, owner)
+        surface:SetParent(owner)
+        surface:ClearAllPoints(); surface:SetAllPoints(owner)
+        setParent(self, surface)
+      end
+      text.SetPoint = function(self, point, relative, relativePoint, x, y)
+        setPoint(self, point, relative, relativePoint, (x or 0) * 4, (y or 0) * 4)
+      end
+      local points = {}
+      for i = 1, text:GetNumPoints() do points[i] = {text:GetPoint(i)} end
+      setParent(text, surface)
+      text:ClearAllPoints()
+      for _, point in ipairs(points) do text:SetPoint(unpack(point)) end
+    end
+    text:SetFont(font, size * 4, flags or "")
+  elseif text.SetTextHeight then
     text:SetFont(font, size * 2, flags or "")
     text:SetTextHeight(size)
   else
@@ -301,7 +345,190 @@ function Z.SetSmoothFontString(text, font, size, flags)
   end
 end
 
+function Z.ShouldUseCombatNameColor(plate, enabled)
+  local unit = plate.unit
+  return enabled and not plate.isFriendly and not plate.isNeutral and not plate.taggedByOther
+    and unit and UnitExists(unit) and UnitCanAttack("player", unit)
+    and UnitAffectingCombat(unit) and UnitAffectingCombat("player") or nil
+end
+
+function Z.IsPlateClickBlocked(now)
+  now = now or GetTime()
+  if Z.clickBlockTime == now then return Z.clickBlocked end
+  Z.clickBlockTime = now
+  local function IsInterface(frame)
+    if not frame or frame == UIParent or frame == WorldFrame then return false end
+    local current = frame
+    for i = 1, 30 do
+      if current.nameplate or current.platename then return false end
+      if current == WorldFrame then return false end
+      if current == UIParent then return true end
+      if not current.GetParent then return false end
+      current = current:GetParent()
+      if not current then return false end
+    end
+    return false
+  end
+  local blocked = false
+  if GetMouseFoci then
+    local frames = GetMouseFoci()
+    if type(frames) == "table" then
+      for _, frame in pairs(frames) do
+        if IsInterface(frame) then blocked = true; break end
+      end
+    end
+  elseif GetMouseFocus then
+    blocked = IsInterface(GetMouseFocus())
+  end
+  -- Legacy clients do not expose all mouse foci. Check open stock panels too.
+  if not blocked and MouseIsOver and UIPanelWindows then
+    for name in pairs(UIPanelWindows) do
+      local frame = _G[name]
+      if frame and frame:IsVisible() and MouseIsOver(frame) then blocked = true; break end
+    end
+  end
+  Z.clickBlocked = blocked
+  return blocked
+end
+
+-- Reuse native reads within one rendered frame. Cache by identity as well as
+-- time so a recycled pool slot can never inherit the previous unit's result.
+function Z.GetPlateProjection(plate, now)
+  local identity = plate.cachedGuid or plate.unit
+  if not identity or type(zAPI) ~= "function" then return end
+  now = now or GetTime()
+  local sample = plate.projectionSample
+  if not sample then sample = {}; plate.projectionSample = sample end
+  if sample.time ~= now or sample.identity ~= identity or sample.api ~= zAPI then
+    sample.time, sample.identity, sample.api = now, identity, zAPI
+    local ok, x, y, depth, wx, wy, wz = pcall(zAPI, "projectUnit", identity, 0)
+    sample.x, sample.y, sample.depth = nil, nil, nil
+    sample.wx, sample.wy, sample.wz = nil, nil, nil
+    if ok then
+      sample.x, sample.y, sample.depth = x, y, depth
+      sample.wx, sample.wy, sample.wz = wx, wy, wz
+    end
+  end
+  return sample.x, sample.y, sample.depth, sample.wx, sample.wy, sample.wz
+end
+
+function Z.GetPlayerWorldPosition(now)
+  if type(zAPI) ~= "function" then return end
+  now = now or GetTime()
+  local sample = Z.playerWorldSample
+  if not sample then sample = {}; Z.playerWorldSample = sample end
+  if sample.time ~= now or sample.api ~= zAPI then
+    sample.time, sample.api = now, zAPI
+    local ok, x, y, z = pcall(zAPI, "unitPosition", "player")
+    sample.x, sample.y, sample.z = nil, nil, nil
+    if ok then sample.x, sample.y, sample.z = x, y, z end
+  end
+  return sample.x, sample.y, sample.z
+end
+
+function Z.ShouldUpdatePlateDepth(now, count, dirty)
+  -- Whole-scene updates: do not stagger individual plates into stale rankings.
+  local interval = count > 20 and 1 / 30 or 1 / 60
+  if dirty or not Z.depthUpdateTime or now - Z.depthUpdateTime >= interval then
+    Z.depthUpdateTime = now
+    return true
+  end
+  return false
+end
+
+function Z.SuppressNativePlateVisuals(plate)
+  -- Keep native regions shown for health/level/elite data, but never render
+  -- them. The client can restore textures and text widths when reusing a slot.
+  if not plate or not plate.original then return end
+  for _, object in pairs(plate.original) do
+    if object and object.SetAlpha and
+        (not object.GetAlpha or object:GetAlpha() ~= 0) then object:SetAlpha(0) end
+  end
+end
+
+-- Ease native stacking corrections in the overlay, leaving the native frame
+-- and its unit association intact. Projection deltas preserve camera motion.
+function Z.UpdatePlateTransition(plate, now)
+  local C = Z.config.nameplates
+  local parent = plate.parent
+  if not parent then return end
+  local identity = plate.cachedGuid or plate.unit
+  local state = plate.positionTransition
+  local duration = math.max(.05, math.min(.5, tonumber(C.transition_duration) or .12))
+  if not state or state.identity ~= identity then
+    state = {identity=identity, started=now, last=now, offsetX=0, offsetY=0}
+    plate.positionTransition = state
+  end
+  local enabled = C.smooth_transitions == "1"
+  plate.appearanceAlpha = enabled and math.min(1, math.max(0, (now - state.started) / duration)) or 1
+  local x, y = parent:GetCenter()
+  if not x or not y then return end
+  local uiScale = UIParent.GetEffectiveScale and UIParent:GetEffectiveScale() or 1
+  local parentScale = parent.GetEffectiveScale and parent:GetEffectiveScale() or 1
+  local plateScale = plate.GetEffectiveScale and plate:GetEffectiveScale() or 1
+  if uiScale <= 0 or plateScale <= 0 then return end
+  x, y = x * parentScale / uiScale,
+    (y + parent:GetHeight() * .5) * parentScale / uiScale
+  local px, py
+  if enabled and identity and type(zAPI) == "function" then
+    local sx, sy, depth = Z.GetPlateProjection(plate, now)
+    if type(sx) == "number" and type(sy) == "number"
+        and type(depth) == "number" and depth > 0 then
+      px, py = sx * UIParent:GetWidth(), sy * UIParent:GetHeight()
+    end
+  end
+  local elapsed = math.max(0, math.min(.1, now - state.last))
+  if enabled and state.x and now - state.last < .25 then
+    local dx, dy = x - state.x, y - state.y
+    if px and state.px then
+      dx, dy = dx - (px - state.px), dy - (py - state.py)
+    elseif math.abs(dx) < 24 and math.abs(dy) < 24 then
+      -- Without projection, only compensate a clearly abrupt frame jump.
+      dx, dy = 0, 0
+    end
+    if math.abs(dx) < 160 and math.abs(dy) < 160 then
+      state.offsetX, state.offsetY = state.offsetX - dx, state.offsetY - dy
+    else
+      -- Large teleports must not draw a plate over unrelated units in transit.
+      state.offsetX, state.offsetY = 0, 0
+    end
+    local blend = math.exp(-elapsed * 3 / duration)
+    state.offsetX, state.offsetY = state.offsetX * blend, state.offsetY * blend
+    state.offsetX = math.max(-80, math.min(80, state.offsetX))
+    state.offsetY = math.max(-80, math.min(80, state.offsetY))
+  else
+    state.offsetX, state.offsetY = 0, 0
+  end
+  state.x, state.y, state.px, state.py, state.last = x, y, px, py, now
+  local ox = state.offsetX * uiScale / plateScale
+  local oy = state.offsetY * uiScale / plateScale + (tonumber(C.vertical_offset) or 0)
+  if not state.appliedX or math.abs(ox - state.appliedX) > .001
+      or math.abs(oy - state.appliedY) > .001 then
+    plate:ClearAllPoints()
+    plate:SetPoint("TOP", parent, "TOP", ox, oy)
+    state.appliedX, state.appliedY = ox, oy
+  end
+end
+
 Z.throttle = {}
+function Z.PositionLevelText(plate, automaticReference, gap)
+  if not plate or not plate.level then return end
+  local C = Z.config.nameplates
+  local reference = C.levelreference == "NAME" and plate.name
+    or C.levelreference == "HEALTH" and plate.health or automaticReference
+  local position = C.levelposition or "LEFT"
+  local points = {
+    LEFT = {"RIGHT", "LEFT", -(gap or 3), 0},
+    RIGHT = {"LEFT", "RIGHT", gap or 3, 0},
+    TOP = {"BOTTOM", "TOP", 0, gap or 3},
+    BOTTOM = {"TOP", "BOTTOM", 0, -(gap or 3)},
+  }
+  local anchor = points[position] or points.LEFT
+  plate.level:ClearAllPoints()
+  plate.level:SetPoint(anchor[1], reference or plate.name, anchor[2],
+    anchor[3] + (tonumber(C.levelx) or 0), anchor[4] + (tonumber(C.levely) or 0))
+end
+
 function Z.throttle:Get(category)
   local fps = tonumber(Z.config.throttle[category]) or 10
   if fps <= 0 then fps = 10 end
@@ -436,14 +663,231 @@ end
 
 -- Keep quest markers inside the already-loaded core chunk. Some 1.12 clients
 -- reject an additional standalone quest file before its functions are defined.
+local flightMasters = {
+  [352] = { name = "Dungar Longdrink", fac = "A", node = "Stormwind" },
+  [523] = { name = "Thor", fac = "A", node = "Lakeshire" },
+  [931] = { name = "Ariena Stormfeather", fac = "A", node = "Morgan\'s Vigil" },
+  [1233] = { name = "Shaethis Darkoak", fac = "AH", node = "Marshal\'s Refuge" },
+  [1387] = { name = "Thysta", fac = "H", node = "Grom\'gol" },
+  [1571] = { name = "Shellei Brondir", fac = "A", node = "Menethil Harbor" },
+  [1572] = { name = "Thorgrum Borrelson", fac = "A", node = "Thelsamar" },
+  [1573] = { name = "Gryth Thurden", fac = "A", node = "Ironforge" },
+  [2226] = { name = "Karos Razok", fac = "H", node = "Tarren Mill" },
+  [2299] = { name = "Borgus Stoutarm", fac = "A", node = "Chillwind Camp" },
+  [2389] = { name = "Zarise", fac = "H", node = "Kargath" },
+  [2409] = { name = "Felicia Maline", fac = "A", node = "Darkshire" },
+  [2432] = { name = "Darla Harris", fac = "A", node = "Southshore" },
+  [2835] = { name = "Cedrik Prose", fac = "A", node = "Refuge Pointe" },
+  [2851] = { name = "Urda", fac = "H", node = "Hammerfall" },
+  [2858] = { name = "Gringer", fac = "H", node = "Booty Bay" },
+  [2859] = { name = "Gyll", fac = "A", node = "Booty Bay" },
+  [2861] = { name = "Gorrik", fac = "H", node = "Badlands" },
+  [2941] = { name = "Lanie Reed", fac = "A", node = "Sentinel Hill" },
+  [2995] = { name = "Tal", fac = "H", node = "Thunder Bluff" },
+  [3305] = { name = "Grisha", fac = "H", node = "Sentinel Hill" },
+  [3310] = { name = "Doras", fac = "H", node = "Orgrimmar" },
+  [3615] = { name = "Devrak", fac = "H", node = "Crossroads" },
+  [3838] = { name = "Vesprystus", fac = "A", node = "Rut\'theran Village" },
+  [3841] = { name = "Caylais Moonfeather", fac = "A", node = "Auberdine" },
+  [4267] = { name = "Daelyshia", fac = "A", node = "Astranaar" },
+  [4312] = { name = "Tharm", fac = "H", node = "Sun Rock Retreat" },
+  [4314] = { name = "Gorkas", fac = "H", node = "Bloodvenom Post" },
+  [4317] = { name = "Nyse", fac = "H", node = "Freewind Post" },
+  [4319] = { name = "Thyssiana", fac = "A", node = "Feathermoon" },
+  [4321] = { name = "Baldruc", fac = "A", node = "Nethergarde Keep" },
+  [4407] = { name = "Teloren", fac = "A", node = "Talrendis Point" },
+  [4551] = { name = "Michael Garrett", fac = "H", node = "Undercity" },
+  [6026] = { name = "Breyk", fac = "H", node = "Brackenwall Village" },
+  [6706] = { name = "Baritanas Skyriver", fac = "A", node = "Nijel\'s Point" },
+  [6726] = { name = "Thalon", fac = "H", node = "Shadowprey Village" },
+  [7823] = { name = "Bera Stonehammer", fac = "A", node = "Thorium Point" },
+  [7824] = { name = "Bulkrek Ragefist", fac = "H", node = "Thorium Point" },
+  [8018] = { name = "Guthrum Thunderfist", fac = "A", node = "Aerie Peak" },
+  [8019] = { name = "Fyldren Moonfeather", fac = "A", node = "Thalanaar" },
+  [8020] = { name = "Shyn", fac = "H", node = "Camp Mojache" },
+  [8609] = { name = "Alexandra Constantine", fac = "A", node = "Chillwind Camp" },
+  [8610] = { name = "Kroum", fac = "H", node = "Revantusk Village" },
+  [10378] = { name = "Omusa Thunderhorn", fac = "H", node = "Camp Taurajo" },
+  [10583] = { name = "Gryfe", fac = "AH", node = "Marshal\'s Refuge" },
+  [10897] = { name = "Sindrayl", fac = "A", node = "Everlook" },
+  [11138] = { name = "Maethrya", fac = "A", node = "Theramore" },
+  [11139] = { name = "Yugrek", fac = "H", node = "Gadgetzan" },
+  [11899] = { name = "Shardi", fac = "H", node = "Stonard" },
+  [11900] = { name = "Brakkar", fac = "H", node = "Valormok" },
+  [11901] = { name = "Andruk", fac = "H", node = "Zoram\'gar Outpost" },
+  [12577] = { name = "Jarrodenus", fac = "A", node = "Aerie Peak" },
+  [12578] = { name = "Mishellena", fac = "A", node = "Light\'s Hope Chapel" },
+  [12596] = { name = "Bibilfaz Featherwhistle", fac = "A", node = "Sorrow Hill" },
+  [12616] = { name = "Vhulgra", fac = "H", node = "Splintertree Post" },
+  [12617] = { name = "Khaelyn Steelwing", fac = "A", node = "Cenarion Hold" },
+  [12636] = { name = "Georgia", fac = "H", node = "Cenarion Hold" },
+  [12740] = { name = "Faustron", fac = "H", node = "Everlook" },
+  [13177] = { name = "Vahgruk", fac = "H", node = "Flame Crest" },
+  [14242] = { name = "_", fac = "H", node = "Marshal\'s Refuge" },
+  [15177] = { name = "Cloud Skydancer", fac = "A", node = "Moonglade" },
+  [15178] = { name = "Runk Windtamer", fac = "H", node = "Moonglade" },
+  [16227] = { name = "Bragok", fac = "AH", node = "Ratchet" },
+  [52093] = { name = "Falok Thurden", fac = "A", node = "Wildhammer Stronghold" },
+  [52094] = { name = "Greta Stonehammer", fac = "A", node = "Dun Garok" },
+  [61132] = { name = "Tezzin Skyfuse", fac = "AH", node = "Sparkwater Port" },
+  [61133] = { name = "Razzit", fac = "AH", node = "Tel\'Abim" },
+  [61532] = { name = "Levenda Skytalon", fac = "AH", node = "Alah\'Thalas" },
+  [61548] = { name = "Andana", fac = "H", node = "Hateforge" },
+  [61549] = { name = "Maria Galwest", fac = "A", node = "Hateforge" },
+  [61623] = { name = "Orrik Thunderbeard", fac = "A", node = "Grim Batol" },
+  [62100] = { name = "Nelly Cogwheel", fac = "A", node = "Gnomeregan" },
+  [62101] = { name = "Mary Willowfield", fac = "H", node = "Grave\'s End" },
+  [62147] = { name = "Leonhart Hamel", fac = "A", node = "Lapidis Isle" },
+  [62415] = { name = "Krangosh Thunderwind", fac = "A", node = "Gillijim\'s Isle" },
+  [62438] = { name = "Razikgar", fac = "H", node = "Gillijim\'s Isle" },
+  [62465] = { name = "Nundir Feathersoar", fac = "A", node = "Nordanaar" },
+  [62574] = { name = "Hefeni", fac = "H", node = "Nordanaar" },
+  [62624] = { name = "Treggi", fac = "AH", node = "Mudsprocket" },
+  [92942] = { name = "Grommok", fac = "H", node = "Krom\'gar" },
+  [92943] = { name = "Vifri Brent", fac = "AH", node = "Blackrock Mountain" },
+  [93100] = { name = "Voryn Skystrider", fac = "A", node = "Krom\'gar" },
+  [93101] = { name = "Vanessa Porter", fac = "A", node = "Stormwind Harbor" },
+  [93102] = { name = "Nal\'rak", fac = "H", node = "Zul\'Aman" },
+}
+local flightMastersByName = {}
+for npcID, fm in pairs(flightMasters) do
+  if fm.name and fm.name ~= '' and fm.name ~= '_' then
+    flightMastersByName[fm.name] = fm
+  end
+end
+
 local questMarkerState = {
   byNPC = {}, byGUID = {}, byName = {}, titles = {}, activeQuestIDs = {},
   repeatable = {}, repeatableQuests = {}, repeatableTitles = {}, revision = 0,
   REPEATABLE = { text = "?", r = .20, g = .65, b = 1, priority = 1 },
   INCOMPLETE = { text = "?", r = .56, g = .56, b = .56, priority = 2 },
   AVAILABLE = { text = "!", r = 1, g = .82, b = .05, priority = 3 },
-  COMPLETE = { text = "?", r = 1, g = .82, b = .05, priority = 4 },
+  FLIGHT = { text = "!", r = .12, g = 1, b = .12, priority = 4 },
+  COMPLETE = { text = "?", r = 1, g = .82, b = .05, priority = 5 },
 }
+
+local function QuestNPCID(unit, guid)
+  if C_CreatureInfo and C_CreatureInfo.GetCreatureID and guid then
+    local ok, npcID = pcall(C_CreatureInfo.GetCreatureID, guid)
+    if ok and npcID then return tonumber(npcID) end
+  end
+  if UnitCreatureID and unit then
+    local ok, npcID = pcall(UnitCreatureID, unit)
+    if ok and npcID then return tonumber(npcID) end
+  end
+  if guid and type(guid) == "string" and string.find(guid, "^0[xX]F130") then
+    local hex = string.sub(guid, 7, 10)
+    local npcID = tonumber(hex, 16)
+    if npcID and npcID > 0 then return npcID end
+  end
+end
+
+local function IsFlightDiscoveryMessage(msg)
+  if not msg or type(msg) ~= "string" then return false end
+  if ERR_NEWTAXIPATH and (msg == ERR_NEWTAXIPATH or string.find(msg, ERR_NEWTAXIPATH, 1, true)) then
+    return true
+  end
+  local lower = string.lower(msg)
+  return string.find(lower, "flight path", 1, true)
+    or string.find(lower, "flugpunkt", 1, true)
+    or string.find(lower, "point de vol", 1, true)
+    or string.find(lower, "ruta de vuelo", 1, true)
+    or string.find(lower, "voo descoberto", 1, true)
+end
+
+local function InitFlightPaths()
+  if not zNameplatesDB then return end
+  zNameplatesDB.knownFlightPaths = zNameplatesDB.knownFlightPaths or {}
+  zNameplatesDB.knownFlightNPCs = zNameplatesDB.knownFlightNPCs or {}
+  zNameplatesDB.knownFlightNames = zNameplatesDB.knownFlightNames or {}
+
+  local race = UnitRace and UnitRace("player")
+  if race then
+    if race == "Human" then
+      zNameplatesDB.knownFlightNPCs[352] = true
+      zNameplatesDB.knownFlightNames["Dungar Longdrink"] = true
+      zNameplatesDB.knownFlightPaths["Stormwind, Elwynn"] = true
+    elseif race == "Dwarf" or race == "Gnome" then
+      zNameplatesDB.knownFlightNPCs[1573] = true
+      zNameplatesDB.knownFlightNames["Gryth Thurden"] = true
+      zNameplatesDB.knownFlightPaths["Ironforge, Dun Morogh"] = true
+    elseif race == "Night Elf" then
+      zNameplatesDB.knownFlightNPCs[3838] = true
+      zNameplatesDB.knownFlightNames["Vesprystus"] = true
+      zNameplatesDB.knownFlightPaths["Rut'theran Village, Teldrassil"] = true
+    elseif race == "Orc" or race == "Troll" then
+      zNameplatesDB.knownFlightNPCs[3310] = true
+      zNameplatesDB.knownFlightNames["Doras"] = true
+      zNameplatesDB.knownFlightPaths["Orgrimmar, Durotar"] = true
+    elseif race == "Tauren" then
+      zNameplatesDB.knownFlightNPCs[2995] = true
+      zNameplatesDB.knownFlightNames["Tal"] = true
+      zNameplatesDB.knownFlightPaths["Thunder Bluff, Mulgore"] = true
+    elseif race == "Undead" or race == "Scourge" then
+      zNameplatesDB.knownFlightNPCs[4551] = true
+      zNameplatesDB.knownFlightNames["Michael Garrett"] = true
+      zNameplatesDB.knownFlightPaths["Undercity, Tirisfal"] = true
+    end
+  end
+
+  if FlightTrackerDB and FlightTrackerDB.routes then
+    for fromNode, targets in pairs(FlightTrackerDB.routes) do
+      zNameplatesDB.knownFlightPaths[fromNode] = true
+      if type(targets) == "table" then
+        for toNode in pairs(targets) do
+          zNameplatesDB.knownFlightPaths[toNode] = true
+        end
+      end
+    end
+  end
+  if FlightTrackerDB and FlightTrackerDB.lastFlightMaster then
+    zNameplatesDB.knownFlightPaths[FlightTrackerDB.lastFlightMaster] = true
+  end
+
+  for nodeName in pairs(zNameplatesDB.knownFlightPaths) do
+    for npcID, fm in pairs(flightMasters) do
+      if fm.node and (string.find(nodeName, fm.node, 1, true) or string.find(fm.node, nodeName, 1, true)) then
+        zNameplatesDB.knownFlightNPCs[npcID] = true
+        if fm.name then zNameplatesDB.knownFlightNames[fm.name] = true end
+      end
+    end
+  end
+end
+
+function Z.ScanTaxiMap()
+  if not zNameplatesDB then return end
+  zNameplatesDB.knownFlightPaths = zNameplatesDB.knownFlightPaths or {}
+  zNameplatesDB.knownFlightNPCs = zNameplatesDB.knownFlightNPCs or {}
+  zNameplatesDB.knownFlightNames = zNameplatesDB.knownFlightNames or {}
+
+  if NumTaxiNodes and TaxiNodeGetType and TaxiNodeName then
+    local numNodes = NumTaxiNodes()
+    for i = 1, numNodes do
+      local nodeType = TaxiNodeGetType(i)
+      if nodeType and nodeType ~= "NONE" then
+        local nodeName = TaxiNodeName(i)
+        if nodeName and nodeName ~= "" then
+          zNameplatesDB.knownFlightPaths[nodeName] = true
+          for npcID, fm in pairs(flightMasters) do
+            if fm.node and (string.find(nodeName, fm.node, 1, true) or string.find(fm.node, nodeName, 1, true)) then
+              zNameplatesDB.knownFlightNPCs[npcID] = true
+              if fm.name then zNameplatesDB.knownFlightNames[fm.name] = true end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  local npcUnit = UnitExists("npc") and "npc" or UnitExists("target") and "target"
+  if npcUnit then
+    local guid = UnitGUID and UnitGUID(npcUnit)
+    local npcID = QuestNPCID(npcUnit, guid)
+    local npcName = UnitName(npcUnit)
+    if npcID then zNameplatesDB.knownFlightNPCs[npcID] = true end
+    if npcName then zNameplatesDB.knownFlightNames[npcName] = true end
+  end
+end
 
 local function BestQuestMarker(current, candidate)
   if not candidate or not questMarkerState[candidate] then return current end
@@ -457,17 +901,6 @@ local function AddQuestMarker(npcID, status)
   npcID = tonumber(npcID)
   if not npcID or not questMarkerState[status] then return end
   questMarkerState.byNPC[npcID] = BestQuestMarker(questMarkerState.byNPC[npcID], status)
-end
-
-local function QuestNPCID(unit, guid)
-  if C_CreatureInfo and C_CreatureInfo.GetCreatureID and guid then
-    local ok, npcID = pcall(C_CreatureInfo.GetCreatureID, guid)
-    if ok and npcID then return tonumber(npcID) end
-  end
-  if UnitCreatureID and unit then
-    local ok, npcID = pcall(UnitCreatureID, unit)
-    if ok and npcID then return tonumber(npcID) end
-  end
 end
 
 local function IsRepeatableQuestMarker(data)
@@ -605,6 +1038,53 @@ function Z.RebuildQuestMarkers()
     AddActiveQuestMarkers(questID, nil, status)
   end
 
+  if Z.config and Z.config.nameplates and Z.config.nameplates.flighticons ~= "0"
+      and Z.config.nameplates.questicons == "1" then
+    InitFlightPaths()
+    local playerFaction = UnitFactionGroup and UnitFactionGroup("player")
+    local fac = playerFaction == "Horde" and "H" or playerFaction == "Alliance" and "A" or ""
+    if fac ~= "" then
+      for npcID, fm in pairs(flightMasters) do
+        if string.find(fm.fac, fac, 1, true) then
+          local isKnown = zNameplatesDB.knownFlightNPCs and (zNameplatesDB.knownFlightNPCs[npcID] or zNameplatesDB.knownFlightNPCs[tostring(npcID)])
+          if not isKnown and fm.name and zNameplatesDB.knownFlightNames and zNameplatesDB.knownFlightNames[fm.name] then
+            isKnown = true
+          end
+          if not isKnown and zNameplatesDB.knownFlightPaths and fm.node then
+            for knownNode in pairs(zNameplatesDB.knownFlightPaths) do
+              if string.find(knownNode, fm.node, 1, true) or string.find(fm.node, knownNode, 1, true) then
+                isKnown = true
+                if zNameplatesDB.knownFlightNPCs then zNameplatesDB.knownFlightNPCs[npcID] = true end
+                if fm.name and zNameplatesDB.knownFlightNames then zNameplatesDB.knownFlightNames[fm.name] = true end
+                break
+              end
+            end
+          end
+          if not isKnown then
+            AddQuestMarker(npcID, "FLIGHT")
+            if fm.name then
+              questMarkerState.byName[fm.name] = BestQuestMarker(questMarkerState.byName[fm.name], "FLIGHT")
+            end
+          end
+        end
+      end
+      if pfDB and pfDB.meta and pfDB.meta.flight then
+        for npcID, mfac in pairs(pfDB.meta.flight) do
+          if not flightMasters[npcID] and string.find(mfac, fac, 1, true) then
+            local isKnown = zNameplatesDB.knownFlightNPCs and (zNameplatesDB.knownFlightNPCs[npcID] or zNameplatesDB.knownFlightNPCs[tostring(npcID)])
+            if not isKnown then
+              AddQuestMarker(npcID, "FLIGHT")
+              local locName = pfDB.units and pfDB.units.loc and pfDB.units.loc[npcID]
+              if locName then
+                questMarkerState.byName[locName] = BestQuestMarker(questMarkerState.byName[locName], "FLIGHT")
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
   questMarkerState.revision = questMarkerState.revision + 1
   if Z.nameplates then Z.nameplates.eventcache = true end
 end
@@ -727,18 +1207,25 @@ end
 function Z.UpdateQuestIcon(plate, name, isPlayer)
   local marker = plate and plate.questIcon
   if not marker then return end
-  if not Z.config or Z.config.nameplates.questicons ~= "1" or isPlayer or not plate.unit or not name then
+  if not Z.config or Z.config.nameplates.questicons ~= "1" or isPlayer or not name then
     marker:Hide()
     plate.questIconRevision = nil
     return
   end
 
-  local guid = plate.cachedGuid or UnitGUID and UnitGUID(plate.unit)
+  local guid = plate.cachedGuid or (plate.unit and UnitGUID and UnitGUID(plate.unit))
   if plate.questIconRevision == questMarkerState.revision and plate.questIconGUID == guid
     and plate.questIconName == name then return end
   plate.questIconRevision = questMarkerState.revision
   plate.questIconGUID = guid
   plate.questIconName = name
+
+  if plate.unit and UnitExists(plate.unit) then
+    if UnitIsPlayer(plate.unit) or UnitIsEnemy("player", plate.unit) then
+      marker:Hide()
+      return
+    end
+  end
 
   local npcID = QuestNPCID(plate.unit, guid)
   local status = guid and questMarkerState.byGUID[guid]
@@ -758,6 +1245,11 @@ function Z.UpdateQuestIcon(plate, name, isPlayer)
     end
   end
 
+  if status == "FLIGHT" and Z.config.nameplates.flighticons == "0" then
+    marker:Hide()
+    return
+  end
+
   local display = status and questMarkerState[status]
   if not display then marker:Hide(); return end
   marker:SetText(display.text)
@@ -769,10 +1261,47 @@ local questWatcher = CreateFrame("Frame", "zNameplatesQuestWatcher", UIParent)
 for _, eventName in pairs({ "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "QUEST_LOG_UPDATE",
   "QUEST_WATCH_UPDATE", "UNIT_QUEST_LOG_CHANGED", "PLAYER_LEVEL_UP", "QUEST_ACCEPTED",
   "QUEST_REMOVED", "QUEST_TURNED_IN", "QUEST_FINISHED", "GOSSIP_SHOW", "GOSSIP_CLOSED",
-  "QUEST_GREETING", "QUEST_DETAIL", "QUEST_PROGRESS", "QUEST_COMPLETE" }) do
+  "QUEST_GREETING", "QUEST_DETAIL", "QUEST_PROGRESS", "QUEST_COMPLETE",
+  "TAXIMAP_OPENED", "TAXIMAP_CLOSED", "UI_INFO_MESSAGE", "CHAT_MSG_SYSTEM" }) do
   pcall(questWatcher.RegisterEvent, questWatcher, eventName)
 end
 questWatcher:SetScript("OnEvent", function()
+  if event == "TAXIMAP_OPENED" then
+    if Z.ScanTaxiMap then Z.ScanTaxiMap() end
+    this.refreshAt = GetTime() + .05
+    return
+  elseif event == "UI_INFO_MESSAGE" or event == "CHAT_MSG_SYSTEM" then
+    if IsFlightDiscoveryMessage(arg1) then
+      local npcUnit = UnitExists("npc") and "npc" or UnitExists("target") and "target"
+      if npcUnit then
+        local guid = UnitGUID and UnitGUID(npcUnit)
+        local npcID = QuestNPCID(npcUnit, guid)
+        local npcName = UnitName(npcUnit)
+        if npcID and zNameplatesDB and zNameplatesDB.knownFlightNPCs then zNameplatesDB.knownFlightNPCs[npcID] = true end
+        if npcName and zNameplatesDB and zNameplatesDB.knownFlightNames then zNameplatesDB.knownFlightNames[npcName] = true end
+      end
+      this.refreshAt = GetTime() + .05
+    end
+    return
+  elseif event == "GOSSIP_SHOW" then
+    if GetGossipOptions then
+      local gOptions = { GetGossipOptions() }
+      for i = 2, table.getn(gOptions), 2 do
+        if gOptions[i] == "taxi" then
+          local npcUnit = UnitExists("npc") and "npc" or UnitExists("target") and "target"
+          if npcUnit then
+            local guid = UnitGUID and UnitGUID(npcUnit)
+            local npcID = QuestNPCID(npcUnit, guid)
+            local npcName = UnitName(npcUnit)
+            if npcID and zNameplatesDB and zNameplatesDB.knownFlightNPCs then zNameplatesDB.knownFlightNPCs[npcID] = true end
+            if npcName and zNameplatesDB and zNameplatesDB.knownFlightNames then zNameplatesDB.knownFlightNames[npcName] = true end
+          end
+          break
+        end
+      end
+    end
+  end
+
   if event == "GOSSIP_SHOW" or event == "QUEST_GREETING" or event == "QUEST_DETAIL"
     or event == "QUEST_PROGRESS" or event == "QUEST_COMPLETE"
     or (event == "QUEST_LOG_UPDATE" or event == "QUEST_ACCEPTED" or event == "QUEST_TURNED_IN")
@@ -816,6 +1345,7 @@ function Z.Refresh()
   if Z.dummyCluster and Z.dummyCluster.Refresh then Z.dummyCluster:Refresh() end
   if Z.combatList and Z.combatList.Refresh then Z.combatList:Refresh() end
   if Z.options and Z.options.Refresh then Z.options:Refresh() end
+  if Z.RefreshPlateChat then Z.RefreshPlateChat() end
 end
 
 local originalCombatTextAddMessage
@@ -891,10 +1421,15 @@ loader:SetScript("OnEvent", function()
   MergeMissing(zNameplatesDB.config, defaults)
   RebaseTable(zNameplatesDB.config)
   Z.config = zNameplatesDB.config
+  zNameplatesDB.knownFlightPaths = zNameplatesDB.knownFlightPaths or {}
+  zNameplatesDB.knownFlightNPCs = zNameplatesDB.knownFlightNPCs or {}
+  zNameplatesDB.knownFlightNames = zNameplatesDB.knownFlightNames or {}
+  InitFlightPaths()
   UpdateFonts()
   Z.ApplyBlizzardXPText()
 
   if Z.StartNameplates then Z.StartNameplates() end
   if Z.StartDummyCluster then Z.StartDummyCluster() end
+  if Z.RefreshPlateChat then Z.RefreshPlateChat() end
   if Z.options and Z.options.Refresh then Z.options:Refresh() end
 end)

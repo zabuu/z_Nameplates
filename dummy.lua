@@ -125,6 +125,9 @@ local function RefreshDummy(base, index)
   local font = C.use_unitfonts == "1" and Z.font_unit or Z.font_default
   local fontSize = tonumber(C.name.fontsize) or tonumber(Z.config.global.font_unit_size) or 10
   local fontStyle = C.name.fontstyle or ""
+  if C.name.fontstyle_combat_enabled == "1" then
+    fontStyle = C.name.fontstyle_combat or fontStyle
+  end
   local width = tonumber(C.width) or 120
   local barHeight = tonumber(C.heighthealth) or 8
   local healthOffset = tonumber(C.health.offset) or -3
@@ -162,6 +165,7 @@ local function RefreshDummy(base, index)
 
   plate.level:ClearAllPoints()
   plate.level:SetPoint("RIGHT", plate.health, "LEFT", -3, 0)
+  Z.PositionLevelText(plate, plate.health, 3)
   SetFont(plate.level, font, fontSize, fontStyle)
   plate.level:SetTextColor(1, .82, .2, 1)
 

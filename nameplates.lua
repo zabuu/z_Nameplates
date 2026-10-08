@@ -347,8 +347,24 @@ function zNameplates.StartNameplates()
     return overlap
   end
 
-  local function ExactUnitDistance(unit)
+  local function ExactUnitDistance(unit, now)
     if not unit then return nil end
+
+    -- Read native floating-point world positions before the older distance
+    -- helpers, whose edge-to-edge/reach calculations can visibly change in
+    -- larger increments while the player or target moves.
+    if type(zAPI) == "function" then
+      local px, py, pz = zNameplates.GetPlayerWorldPosition(now)
+      -- projectUnit returns the head position, not the unit origin. Preserve
+      -- the existing exact-distance semantics rather than reusing head height.
+      local unitOk, ux, uy, uz = pcall(zAPI, "unitPosition", unit)
+      if not unitOk then ux, uy, uz = nil, nil, nil end
+      if type(px) == "number" and type(py) == "number"
+          and type(ux) == "number" and type(uy) == "number" then
+        local dx, dy, dz = ux - px, uy - py, (uz or 0) - (pz or 0)
+        return math.sqrt(dx * dx + dy * dy + dz * dz)
+      end
+    end
 
     if type(UnitXP) == "function" then
       local found, distance = pcall(UnitXP, "distanceBetween", "player", unit)
@@ -395,8 +411,8 @@ function zNameplates.StartNameplates()
     -- 1. Native zAPI camera projection (exact 3D depth along camera view vector)
     -- This updates continuously during both camera rotation and player movement.
     if type(zAPI) == "function" and guid then
-      local ok, sx, sy, depth, wx, wy, wz = pcall(zAPI, "projectUnit", guid, 0)
-      if ok and type(depth) == "number" and depth > 0 then
+      local sx, sy, depth = zNameplates.GetPlateProjection(nameplate, frameState.now)
+      if type(depth) == "number" and depth > 0 then
         return depth
       end
     end
@@ -504,9 +520,12 @@ function zNameplates.StartNameplates()
   end
 
   local function UpdateNameplateDepthLayers()
+    local now = frameState.now or GetTime()
     -- Ensure all visible plates have their GUID and unit token resolved immediately
     -- (critical for stationary targets, dummies, and plates present at /rl)
-    if C_NamePlate and C_NamePlate.GetNamePlateForUnit then
+    if C_NamePlate and C_NamePlate.GetNamePlateForUnit and
+        (not frameState.depthRecoveryAt or now >= frameState.depthRecoveryAt) then
+      frameState.depthRecoveryAt = now + .5
       for i = 1, 40 do
         local u = "nameplate" .. i
         if UnitExists(u) then
@@ -518,6 +537,7 @@ function zNameplates.StartNameplates()
             end
             if not visiblePlates[p] then
               visiblePlates[p] = p
+              visiblePlateCount = visiblePlateCount + 1
             end
           end
         end
@@ -527,7 +547,7 @@ function zNameplates.StartNameplates()
     table.wipe(depthPlates)
     local count = 0
     for plate in pairs(visiblePlates) do
-      if plate:IsVisible() and plate.nameplate then
+      if plate:IsVisible() and plate.nameplate and not plate.nameplate.clusterHidden then
         count = count + 1
         depthPlates[count] = plate
         local np = plate.nameplate
@@ -767,8 +787,8 @@ function zNameplates.StartNameplates()
     local identity = plate.cachedGuid or plate.unit
     if plate.distanceScaleIdentity ~= identity then
       plate.distanceScaleIdentity = identity
+      plate.distanceScale = nil
       plate.distanceTargetScale = nil
-      plate.distanceNextSample = nil
       plate.distanceProgress = nil
       plate.distanceVisualTime = nil
       plate.distanceAlpha = nil
@@ -783,21 +803,15 @@ function zNameplates.StartNameplates()
     plate.distanceVisualTime = now
 
     if cfg.distance_scale or cfg.distance_alpha then
-      -- Sample exact range at the same cadence as the central visual loop. The
-      -- eased frame scale then supplies many small transitions between glyph
-      -- sizes instead of visibly stepping between a few coarse values.
-      if not plate.distanceNextSample or now >= plate.distanceNextSample then
-        local progress = 0
-        local distance = ExactUnitDistance(plate.unit)
-        if distance and distance > 8 then
-          progress = math.min(1, (distance - 8) / (cfg.distance_max_range - 8))
-        end
-        plate.distanceProgress = progress
-        plate.distanceNextSample = now + .01
+      -- Re-sample the floating-point position every rendered frame. SetScale
+      -- applies to the complete plate, including its text and child elements.
+      local distance = ExactUnitDistance(plate.unit, now)
+      if distance then
+        plate.distanceProgress = math.max(0,
+          math.min(1, (distance - 8) / (cfg.distance_max_range - 8)))
       end
     else
       plate.distanceProgress = 0
-      plate.distanceNextSample = nil
     end
 
     local progress = plate.distanceProgress or 0
@@ -844,7 +858,8 @@ function zNameplates.StartNameplates()
     -- Distance and line-of-sight select the stronger fade. They never multiply,
     -- so a far, obstructed plate bottoms out at the configured minimum once.
     local visualAlpha = math.min(distanceAlpha, losAlpha)
-    local desiredAlpha = math.max(0, math.min(1, (baseAlpha or 1) * visualAlpha))
+    local desiredAlpha = math.max(0, math.min(1,
+      (baseAlpha or 1) * visualAlpha * (plate.appearanceAlpha or 1)))
     if not plate.cachedAlpha or abs(plate.cachedAlpha - desiredAlpha) > .0005 then
       plate:SetAlpha(desiredAlpha)
       plate.cachedAlpha = desiredAlpha
@@ -920,6 +935,8 @@ function zNameplates.StartNameplates()
     if not object.GetObjectType then return end
 
     local otype = object:GetObjectType()
+    -- Do not Hide(): IsShown() still carries native level/elite information.
+    if object.SetAlpha then object:SetAlpha(0) end
 
     if otype == "Texture" then
       object:SetTexture("")
@@ -1258,10 +1275,18 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
       end
 
     elseif event == "NAME_PLATE_UNIT_ADDED" then
+      this.depthDirty = true
       -- arg1 = "nameplateN" unit token. Cache the GUID for cache keys and the
       -- token itself for token-based UnitX reads (stable per plate lifetime).
       local plate = C_NamePlate.GetNamePlateForUnit(arg1)
+      -- Some clients expose an already-created pool slot only on attachment.
+      if plate and not plate.nameplate then
+        nameplates.OnCreate(plate)
+        registry[plate] = plate
+      end
       if plate and plate.nameplate then
+        zNameplates.ResetPlateCluster(plate.nameplate)
+        zNameplates.SuppressNativePlateVisuals(plate.nameplate)
         SetLineOfSightDesaturation(plate.nameplate, nil)
         local wasVisible = visiblePlates[plate]
         visiblePlates[plate] = plate
@@ -1269,6 +1294,11 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         local guid = UnitGUID(arg1)
         plate.nameplate.cachedGuid = guid
         plate.nameplate.unit = arg1
+        plate.nameplate.positionTransition = nil
+        plate.nameplate.distanceScaleIdentity = nil
+        plate.nameplate.distanceScale = nil
+        plate.nameplate.distanceVisualTime = nil
+        if C.nameplates.smooth_transitions == "1" then plate.nameplate:SetAlpha(0) end
         -- A Blizzard nameplate is pooled. Clear all identity-dependent state
         -- immediately on reassignment, even when the replacement unit has the
         -- same displayed name as the previous occupant.
@@ -1300,6 +1330,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
       end
 
     elseif event == "NAME_PLATE_UNIT_REMOVED" then
+      this.depthDirty = true
       -- arg1 = "nameplateN" unit token; UnitGUID still resolves inside the
       -- handler on most clients. Keep our own token map because OctoWoW can
       -- release the C_NamePlate association before this callback runs.
@@ -1318,11 +1349,13 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         if plateByGuid[guid] then plateByGuid[guid] = nil end
       end
       if plate and plate.nameplate then
+        zNameplates.ResetPlateCluster(plate.nameplate)
         SetLineOfSightDesaturation(plate.nameplate, nil)
         if plate.nameplate.questIcon then plate.nameplate.questIcon:Hide() end
         plate.nameplate.questIconRevision = nil
         plate.nameplate.cachedGuid = nil
         plate.nameplate.unit = nil
+        plate.nameplate.positionTransition = nil
         plate.nameplate.depth = nil
         plate.nameplate.cachedStrata = nil
         plate.nameplate.cachedBaseLevel = nil
@@ -1406,6 +1439,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
       end
 
     elseif event == "PLAYER_TARGET_CHANGED" then
+      this.depthDirty = true
       frameState.targetGuid = UnitGUID('target')
       -- Flag the target's plate for update
       local plate = C_NamePlate.GetNamePlateForUnit("target")
@@ -1427,10 +1461,16 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
   end)
 
   nameplates:SetScript("OnUpdate", function()
-    -- PERF: Throttle central OnUpdate to ~80 FPS (0.0125s)
-    -- Saves ~44% calls at 144 FPS while staying above 50 FPS target-plate rate
     local now = GetTime()
-    if (this.frameTick or 0) + 0.01 > now then return end
+    if (this.frameTick or 0) + .01 > now and not this.depthDirty then
+      -- Keep distance scaling/alpha on the actual render cadence. The more
+      -- expensive plate data and depth bookkeeping remain capped below.
+      frameState.now = now
+      for plate in pairs(visiblePlates) do
+        if plate:IsVisible() then nameplates.OnUpdate(plate, frameState, true) end
+      end
+      return
+    end
     this.frameTick = now
 
     -- PERF: Cache GetTime() once per frame
@@ -1464,7 +1504,13 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
       end
     end
 
-    UpdateNameplateDepthLayers()
+    if zNameplates.UpdatePlateClusters(now, visiblePlates, visiblePlateCount, this.depthDirty) then
+      this.depthDirty = true
+    end
+    if zNameplates.ShouldUpdatePlateDepth(now, visiblePlateCount, this.depthDirty) then
+      this.depthDirty = nil
+      UpdateNameplateDepthLayers()
+    end
 
     for plate in pairs(visiblePlates) do
       if plate:IsVisible() then
@@ -1524,6 +1570,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
 
     -- create zNameplates overlay
     local nameplate = CreateFrame("Button", platename, parent)
+    nameplate:SetAlpha(0)
     nameplate.platename = platename
     nameplate:EnableMouse(0)
     nameplate.parent = parent
@@ -1676,8 +1723,22 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     nameplate.tick = GetTime() + mathmod(platecount, 10) * 0.05
 
     parent.nameplate = nameplate
-    -- NOTE: OnUpdate is now handled centrally, not per-plate/
-    parent:SetScript("OnUpdate", nil)  -- Disable Blizzard's OnUpdate
+    -- The native client can restore these regions after creation/attachment.
+    -- Reassert suppression before rendering, outside the throttled data pass.
+    -- Full zNP updates are still handled by the central loop.
+    parent:SetScript("OnUpdate", function()
+      zNameplates.SuppressNativePlateVisuals(parent.nameplate)
+    end)
+    local previousOnShow = parent:GetScript("OnShow")
+    parent:SetScript("OnShow", function()
+      if previousOnShow then previousOnShow(parent) end
+      zNameplates.SuppressNativePlateVisuals(parent.nameplate)
+      -- Do not flash the last occupant while the unit-added event catches up.
+      parent.nameplate:SetAlpha(0)
+      parent.nameplate.cachedAlpha = nil
+      parent.nameplate.positionTransition = nil
+    end)
+    zNameplates.SuppressNativePlateVisuals(nameplate)
 
     SetPlateDepthLayer(nameplate, "BACKGROUND", 4)
 
@@ -1787,6 +1848,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     local plate = this:GetParent().nameplate
     local healthbar = plate and plate.original and plate.original.healthbar
     if plate and plate.health and healthbar and healthbar.GetMinMaxValues and healthbar.GetValue then
+      if plate.clusterHidden or plate.clusterGroup then return end
       plate.health:SetMinMaxValues(healthbar:GetMinMaxValues())
       plate.health:SetValue(healthbar:GetValue())
     end
@@ -1881,6 +1943,9 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     end
     plate.isFriendly = unittype == "FRIENDLY_PLAYER" or unittype == "FRIENDLY_NPC"
     local font_style = plate.isFriendly and (C.nameplates.name.fontstyle_friendly or C.nameplates.name.fontstyle) or C.nameplates.name.fontstyle
+    if C.nameplates.name.fontstyle_combat_enabled == "1" and IsCombatWithPlayer(plate) then
+      font_style = C.nameplates.name.fontstyle_combat or font_style
+    end
     font_size = GetNameplateFontSize(plate.isFriendly)
     if plate.cache.fontStyle ~= font_style or plate.cache.fontSize ~= font_size then
       plate.cache.fontStyle = font_style
@@ -1968,7 +2033,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
       plate.guild:Hide()
       plate.totem:Show()
     elseif HidePlate(unittype, (hpmax-hp == hpmin), target, plate) then
-      plate.level:SetPoint("RIGHT", plate.name, "LEFT", -3, 0)
+      zNameplates.PositionLevelText(plate, plate.name, 3)
       plate.name:SetParent(plate)
       plate.guild:SetPoint("BOTTOM", plate.name, "BOTTOM", -2, -(font_size + 2))
 
@@ -1982,7 +2047,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
       end
       plate.totem:Hide()
     else
-      plate.level:SetPoint("RIGHT", plate.health, "LEFT", -5, 0)
+      zNameplates.PositionLevelText(plate, plate.health, 5)
       plate.name:SetParent(plate.health)
       plate.guild:SetPoint("BOTTOM", plate.health, "BOTTOM", 0, -(font_size + 4))
 
@@ -2169,7 +2234,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     local index = 1
 
     local isFriendly = plate.isFriendly
-    local showDebuffsForType = cfg.showdebuffs and (isFriendly and cfg.showdebuffs_friendly or (not isFriendly and cfg.showdebuffs_hostile))
+    local showDebuffsForType = not plate.clusterGroup and cfg.showdebuffs and (isFriendly and cfg.showdebuffs_friendly or (not isFriendly and cfg.showdebuffs_hostile))
     if showDebuffsForType then
       -- Pull debuffs from C_UnitAuras (HARMFUL range). owndebuffs adds the
       -- PLAYER filter token so only auras whose caster GUID matches the local
@@ -2266,7 +2331,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     nameplates:OnDataChanged((frame or this).nameplate)
   end
 
-  nameplates.OnUpdate = function(frame, state)
+  nameplates.OnUpdate = function(frame, state, visualOnly)
     local nameplate = frame.nameplate
     local now = state and state.now or GetTime()
 
@@ -2284,12 +2349,14 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     -- Size, opacity, and line-of-sight transitions run at the fast central
     -- cadence so movement remains continuous even when normal plate data is
     -- using the lower non-target update rate.
+    zNameplates.UpdatePlateTransition(nameplate, now)
     ApplyDistanceEffects(nameplate, now, baseAlpha)
+    if visualOnly then return end
     -- Target plate castbar runs on its own dedicated frame (nameplates.castbarFrame).
     -- For non-target plates with castbar active, use castbar throttle to ensure
     -- smooth animation without overloading the central loop.
     local isCastingNonTarget = not target and nameplate.castbar and nameplate.castbar:IsShown()
-    if not isCastingNonTarget and not target and cfg.showcastbar and nameplate.cachedGuid then
+    if not nameplate.clusterGroup and not isCastingNonTarget and not target and cfg.showcastbar and nameplate.cachedGuid then
       local castInfo = GetCastInfo(nameplate.unit)
       if castInfo and castInfo.endTime > now then
         isCastingNonTarget = true
@@ -2352,9 +2419,9 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     -- =========================================================================
     local overlapEnabled = ShouldOverlap(nameplate)
     local edgeReleased = ReleaseAtScreenEdge(frame, nameplate, overlapEnabled)
-    local collisionReleased = overlapEnabled or edgeReleased
+    local collisionReleased = overlapEnabled or edgeReleased or nameplate.clusterGroup ~= nil
     local useOverlap = collisionReleased or C.nameplates["vertical_offset"] ~= "0"
-    local clickable = C.nameplates["clickthrough"] ~= "1"
+    local clickable = nameplate.clusterGroup ~= nil or C.nameplates["clickthrough"] ~= "1"
 
     if not clickable then
       frame:EnableMouse(false)
@@ -2385,7 +2452,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
 
     local mouseEnabled = nameplate:IsMouseEnabled()
     if C.nameplates["clickthrough"] == "0" and collisionReleased and SpellIsTargeting() == mouseEnabled then
-      nameplate:EnableMouse(not mouseEnabled)
+      if not nameplate.clusterGroup then nameplate:EnableMouse(not mouseEnabled) end
     end
 
     -- Target transition triggers immediate depth layer update
@@ -2421,7 +2488,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     local unit = nameplate.unit
     local inCombatWithPlayer = cfg.namefightcolor and unit and UnitExists(unit) and
       UnitAffectingCombat(unit) and UnitAffectingCombat("player") or nil
-    local combatNameOverride = inCombatWithPlayer and not nameplate.taggedByOther and not nameplate.isNeutral or nil
+    local combatNameOverride = zNameplates.ShouldUseCombatNameColor(nameplate, inCombatWithPlayer)
     if nameplate.cache.inCombat ~= combatNameOverride then
       nameplate.cache.inCombat = combatNameOverride
       if combatNameOverride then
@@ -2506,7 +2573,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     -- Target plate castbar is handled by nameplates.castbarFrame (dedicated OnUpdate,
     -- engine framerate, decoupled from central loop). Only update non-target castbars here.
     local isTargetPlate = target or nameplate.istarget or (nameplate.health and nameplate.health.zoomed)
-    if cfg.showcastbar and not cfg.targetcastbar and not isTargetPlate then
+    if not nameplate.clusterGroup and cfg.showcastbar and not cfg.targetcastbar and not isTargetPlate then
       local cbThrottle = zNameplates.throttle:Get("nameplates_castbar")
       if visiblePlateCount > 20 then
         local massThrottle = zNameplates.throttle:Get("nameplates_mass")
@@ -2516,7 +2583,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         nameplate.castbar_tick = now
         nameplates.UpdateCastbar(nameplate, now)
       end
-    elseif cfg.showcastbar and cfg.targetcastbar and not isTargetPlate then
+    elseif not nameplate.clusterGroup and cfg.showcastbar and cfg.targetcastbar and not isTargetPlate then
       if nameplate.castbar.isShown then
         nameplate.castbar.isShown = nil
         nameplate.castbar.lastEndTime = nil
@@ -2723,6 +2790,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     nameplate:EnableMouse(false)
 
     -- adjust vertical offset
+    if nameplate.positionTransition then nameplate.positionTransition.appliedX = nil end
     if C.nameplates["vertical_offset"] ~= "0" then
       nameplate:SetPoint("TOP", parent, "TOP", 0, tonumber(C.nameplates["vertical_offset"]))
     end
@@ -2730,7 +2798,9 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     -- The overlay only receives mouse input when overlap or vertical offset is
     -- active, but keeping its forwarding handler installed avoids stale click
     -- behavior when a pooled plate changes from friendly to hostile (or back).
-    nameplate:SetScript("OnClick", function() parent:Click() end)
+    nameplate:SetScript("OnClick", function()
+      if not zNameplates.IsPlateClickBlocked() then zNameplates.ClickPlate(nameplate, arg1) end
+    end)
 
     -- enable mouselook on rightbutton down
     if C.nameplates["rightclick"] == "1" then
@@ -2745,6 +2815,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
   local hookOnDataChanged = nameplates.OnDataChanged
   nameplates.OnDataChanged = function(self, nameplate)
     hookOnDataChanged(self, nameplate)
+    if nameplate.clusterGroup then nameplate.clusterRenderDirty = true end
 
     -- The normal data pass restores live reaction/threat colours. Reapply the
     -- grayscale treatment once after that pass while the unit remains blocked.
@@ -2754,7 +2825,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
 
     -- Keep mouse ownership on the correct frame when a pooled nameplate changes
     -- between friendly and non-friendly units.
-    if (ShouldOverlap(nameplate) or C.nameplates["vertical_offset"] ~= "0") then
+    if (nameplate.clusterGroup or ShouldOverlap(nameplate) or C.nameplates["vertical_offset"] ~= "0") then
       nameplate.parent:EnableMouse(false)
     else
       nameplate:EnableMouse(false)
@@ -2801,6 +2872,21 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
   -- The combat-list panel mirrors these existing plate objects and their live
   -- rendered colours instead of building a second nameplate scanner.
   nameplates.visiblePlates = visiblePlates
+  local updatePlate = nameplates.OnUpdate
+  nameplates.OnUpdate = function(frame, state, visualOnly)
+    local plate = frame.nameplate
+    if plate.clusterHidden then return end
+    updatePlate(frame, state, visualOnly)
+    if plate.clusterGroup then zNameplates.RenderPlateCluster(plate) end
+    if zNameplates.IsPlateClickBlocked(state and state.now) then
+      frame:EnableMouse(false)
+      plate:EnableMouse(false)
+      plate.uiClickBlocked = true
+    elseif plate.uiClickBlocked then
+      plate.uiClickBlocked = nil
+      plate.lasttick = nil
+    end
+  end
   nameplates.IsCombatWithPlayer = IsCombatWithPlayer
   zNameplates.nameplates = nameplates
 end

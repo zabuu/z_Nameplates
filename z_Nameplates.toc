@@ -9,5 +9,7 @@
 
 core.lua
 options.lua
+clusters.lua
 nameplates.lua
 dummy.lua
+chat.lua
