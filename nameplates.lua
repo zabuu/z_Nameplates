@@ -466,57 +466,7 @@ function zNameplates.StartNameplates()
 
   local function SetPlateDepthLayer(nameplate, strata, baseLevel)
     if not nameplate then return end
-
-    if nameplate.cachedStrata ~= strata then
-      nameplate.cachedStrata = strata
-      nameplate:SetFrameStrata(strata)
-      if nameplate.parent and nameplate.parent.SetFrameStrata then
-        pcall(nameplate.parent.SetFrameStrata, nameplate.parent, strata)
-      end
-    end
-
-    if nameplate.cachedBaseLevel ~= baseLevel then
-      nameplate.cachedBaseLevel = baseLevel
-      nameplate:SetFrameLevel(baseLevel + 1)
-      if nameplate.parent and nameplate.parent.SetFrameLevel then
-        pcall(nameplate.parent.SetFrameLevel, nameplate.parent, baseLevel)
-      end
-
-      if nameplate.health then
-        nameplate.health:SetFrameLevel(baseLevel + 2)
-      end
-      if nameplate.totem then
-        nameplate.totem:SetFrameLevel(baseLevel + 3)
-      end
-      if nameplate.castbar then
-        nameplate.castbar:SetFrameLevel(baseLevel + 3)
-        if nameplate.castbar.icon then
-          nameplate.castbar.icon:SetFrameLevel(baseLevel + 4)
-        end
-      end
-      if nameplate.debuffs then
-        for i = 1, 16 do
-          local debuff = nameplate.debuffs[i]
-          if debuff then
-            debuff:SetFrameLevel(baseLevel + 3)
-            if debuff.cd then
-              debuff.cd:SetFrameLevel(baseLevel + 4)
-            end
-          end
-        end
-      end
-      if nameplate.combopoints then
-        for i = 1, 5 do
-          local cp = nameplate.combopoints[i]
-          if cp then
-            cp:SetFrameLevel(baseLevel + 5)
-          end
-        end
-      end
-      if nameplate.raidiconframe then
-        nameplate.raidiconframe:SetFrameLevel(baseLevel + 6)
-      end
-    end
+    zNameplates.ApplyPlateLayers(nameplate, strata, baseLevel)
   end
 
   local function UpdateNameplateDepthLayers()
@@ -782,6 +732,7 @@ function zNameplates.StartNameplates()
   end
 
   local function ApplyDistanceEffects(plate, now, baseAlpha)
+    zNameplates.RepairPlateTextLayers(plate)
     local baseScale = UIParent:GetScale()
     now = now or GetTime()
     local identity = plate.cachedGuid or plate.unit
@@ -1635,6 +1586,13 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     nameplate.level = nameplate:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     nameplate.level:SetPoint("RIGHT", nameplate.health, "LEFT", -3, 0)
 
+    nameplate.textframe = CreateFrame("Frame", nil, nameplate)
+    nameplate.textframe:SetAllPoints(nameplate)
+    nameplate.textframe:EnableMouse(false)
+    nameplate.name:SetParent(nameplate.textframe)
+    nameplate.guild:SetParent(nameplate.textframe)
+    nameplate.level:SetParent(nameplate.textframe)
+
     -- Create a dedicated high-level frame for the raid icon so it renders
     -- ABOVE nameplate.health (FrameLevel 4) and stays visible even when
     -- nameplates are toggled off (the Blizzard parent plate still exists).
@@ -1954,6 +1912,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
       zNameplates.SetSmoothFontString(plate.name, font, font_size, font_style)
       zNameplates.SetSmoothFontString(plate.guild, font, font_size, font_style)
       zNameplates.SetSmoothFontString(plate.level, font, font_size, font_style)
+      zNameplates.RepairPlateTextLayers(plate)
     end
     if plate.isFriendly or plate.isNeutral then
       plate.overlapEnabled = cfg.overlap_friendly
@@ -2034,7 +1993,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
       plate.totem:Show()
     elseif HidePlate(unittype, (hpmax-hp == hpmin), target, plate) then
       zNameplates.PositionLevelText(plate, plate.name, 3)
-      plate.name:SetParent(plate)
+      plate.name:SetParent(plate.textframe)
       plate.guild:SetPoint("BOTTOM", plate.name, "BOTTOM", -2, -(font_size + 2))
 
       if plate.isCritter then plate.level:Hide() else plate.level:Show() end
@@ -2048,7 +2007,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
       plate.totem:Hide()
     else
       zNameplates.PositionLevelText(plate, plate.health, 5)
-      plate.name:SetParent(plate.health)
+      plate.name:SetParent(plate.textframe)
       plate.guild:SetPoint("BOTTOM", plate.health, "BOTTOM", 0, -(font_size + 4))
 
       if plate.isCritter then plate.level:Hide() else plate.level:Show() end
@@ -2815,6 +2774,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
   local hookOnDataChanged = nameplates.OnDataChanged
   nameplates.OnDataChanged = function(self, nameplate)
     hookOnDataChanged(self, nameplate)
+    zNameplates.RepairPlateTextLayers(nameplate)
     if nameplate.clusterGroup then nameplate.clusterRenderDirty = true end
 
     -- The normal data pass restores live reaction/threat colours. Reapply the

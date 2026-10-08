@@ -4,7 +4,7 @@ from lupa.lua51 import LuaRuntime
 
 root = Path(__file__).resolve().parents[1]
 lua = LuaRuntime(unpack_returned_tuples=True)
-for filename in ("core.lua", "options.lua", "clusters.lua", "nameplates.lua", "dummy.lua", "chat.lua"):
+for filename in ("core.lua", "options.lua", "layers.lua", "clusters.lua", "nameplates.lua", "dummy.lua", "chat.lua"):
     lua.compile((root / filename).read_text(encoding="utf-8-sig"), name=filename)
 
 lua.execute(r'''

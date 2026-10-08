@@ -323,6 +323,7 @@ function Z.SetSmoothFontString(text, font, size, flags)
       text.zSmoothFrame = surface
       local setParent, setPoint = text.SetParent, text.SetPoint
       text.SetParent = function(self, owner)
+        if surface:GetParent() == owner then return end
         surface:SetParent(owner)
         surface:ClearAllPoints(); surface:SetAllPoints(owner)
         setParent(self, surface)

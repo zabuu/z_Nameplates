@@ -30,6 +30,15 @@ scale. Combat-red names apply only to attackable hostile units, not friendlies
 or neutral names. Nameplates remain visible over UI windows, but the current
 mouse-focus stack (or legacy open-panel checks) prevents clicks through them.
 
+Plate text has its own non-interactive layer above bars/icons. Parent-first
+explicit strata/level updates keep backdrops below their bars, including when
+strata changes without a depth-rank change. Per-frame checks repair text and
+health-backdrop drift without rewriting healthy layers. The 4x font surfaces
+and cluster-count badge participate in the same ordering.
+For missing fills or flickering labels, mouse over or target the affected unit
+and run `/znpdump`; it reports native/rendered health values, fill, backdrop,
+text/font-surface layers, opacity, size, depth, and clustering state.
+
 The Distance page also offers **Smooth nameplate transitions**, enabled by
 default with a 0.12-second transition. New plates fade in, and sudden native
 stacking corrections ease into place. With zAPI available, projected unit

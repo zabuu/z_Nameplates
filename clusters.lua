@@ -41,7 +41,7 @@ function Z.RenderPlateCluster(plate)
   local parentScale = plate.parent:GetEffectiveScale()
   badge:SetScale(uiScale / math.max(.001, parentScale))
   badge:SetFrameStrata(plate:GetFrameStrata())
-  badge:SetFrameLevel(plate:GetFrameLevel() + 6)
+  badge:SetFrameLevel(plate:GetFrameLevel() + 9)
   badge:Show()
   if not plate.clusterRenderDirty and plate.clusterRenderGroup == group
       and plate.clusterRenderCount == group.count and plate.clusterRenderAverage == group.average then return end
