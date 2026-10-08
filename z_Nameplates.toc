@@ -4,7 +4,7 @@
 ## Notes: Standalone nameplates extracted from pfUI/sfUI.
 ## Version: 2.1.0
 ## OptionalDeps: SW_FixLogStrings
-## SavedVariables: zNameplatesLegacyBridge
+## SavedVariables: zNameplatesLegacyBridge, zNameplatesProfiles
 ## SavedVariablesPerCharacter: zNameplatesDB
 
 core.lua

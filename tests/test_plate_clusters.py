@@ -6,6 +6,7 @@ root = Path(__file__).resolve().parents[1]
 lua = LuaRuntime(unpack_returned_tuples=True)
 lua.execute('''
 zNameplates={config={nameplates={cluster_enabled="1",cluster_health_band="20"}}}
+zNameplates.GetStringColor=function() return 1,.92,.15,1 end
 table.wipe=function(t) for k in pairs(t) do t[k]=nil end end
 units={}; visible={}; plates={}
 UnitExists=function(u) return units[u]~=nil end
@@ -127,5 +128,8 @@ Z.config.nameplates.cluster_enabled="1"; Z.UpdatePlateClusters(.17,visible,31,tr
 local member=plates[1].clusterGroup.members[2]
 Z.ResetPlateCluster(member)
 assert(member.shown and not member.clusterHidden and not member.clusterGroup)
+Z.config.nameplates.cluster_threshold="60"
+Z.UpdatePlateClusters(.18,visible,51,true)
+for _,p in pairs(plates) do assert(not p.clusterGroup) end
 ''')
 print("Nameplate cluster grouping, migration, health display, and click checks passed.")

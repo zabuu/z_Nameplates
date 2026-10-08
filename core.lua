@@ -58,9 +58,11 @@ local defaults = {
   },
   combatlist = {
     shown = "1", collapsed = "1",
+    scale = "1", opacity = "1", width = "0",
     point = "TOPLEFT", relativePoint = "TOPLEFT",
     x = "1223.77657471", y = "-4.8518200319566",
   },
+  profiles = { source = "@default" },
   platechat = {
     enabled = "0", show_without_plate = "0", position = "RIGHT", x = "6", y = "0",
     duration = "8", fade = "1", scale = "1", fontsize = "12",
@@ -79,7 +81,8 @@ local defaults = {
     nameplate_range = "41",
     distance_scale = "1", distance_min_scale = "58",
     smooth_transitions = "1", transition_duration = ".12",
-    cluster_enabled = "1", cluster_health_band = "20",
+    cluster_enabled = "1", cluster_health_band = "20", cluster_threshold = "30",
+    cluster_count_scale = "1.6", cluster_count_color = "1,.92,.15,1",
     distance_alpha = "1", distance_min_alpha = "37", los_fade = "1",
     los_desaturation = "27",
     verticalhealth = "0", vertical_offset = "0",
@@ -1382,10 +1385,122 @@ function Z.ApplyBlizzardXPText()
   end
 end
 
+function Z.PositionRaidIcon(plate)
+  local positions={
+    TOPLEFT={"BOTTOMLEFT","TOPLEFT"}, TOP={"BOTTOM","TOP"}, TOPRIGHT={"BOTTOMRIGHT","TOPRIGHT"},
+    LEFT={"RIGHT","LEFT"}, CENTER={"CENTER","CENTER"}, RIGHT={"LEFT","RIGHT"},
+    BOTTOMLEFT={"TOPLEFT","BOTTOMLEFT"}, BOTTOM={"TOP","BOTTOM"}, BOTTOMRIGHT={"TOPRIGHT","BOTTOMRIGHT"},
+  }
+  local C=Z.config.nameplates
+  local anchors=positions[C.raidiconpos] or positions.TOP
+  plate.raidicon:ClearAllPoints()
+  plate.raidicon:SetPoint(anchors[1],plate.health,anchors[2],tonumber(C.raidiconoffx) or 0,tonumber(C.raidiconoffy) or 0)
+end
+
+function Z.GetDefaultSetting(path)
+  local value = type(zNameplatesProfiles)=="table" and zNameplatesProfiles.defaultConfig or defaults
+  for _, key in ipairs(path) do
+    if type(value) ~= "table" then value=nil; break end
+    value = value[key]
+  end
+  if value==nil then
+    value=defaults
+    for _,key in ipairs(path) do if type(value)~="table" then return nil end; value=value[key] end
+  end
+  return value
+end
+
 function Z.Reset()
+  if Z.CopyCharacterProfile and zNameplatesDB then Z.CopyCharacterProfile("@default"); return end
   table.wipe(Z.config)
   MergeMissing(Z.config, defaults)
   RebaseTable(Z.config)
+  Z.Refresh()
+end
+
+-- Native per-character storage remains authoritative. The account store holds
+-- an independent default and discoverable character snapshots, never shared
+-- mutable settings between characters.
+function Z.CharacterProfileKey()
+  return (GetRealmName() or "Unknown realm") .. " / " .. (UnitName("player") or "Unknown character")
+end
+
+function Z.PrepareProfileStore()
+  if type(zNameplatesProfiles) ~= "table" then
+    zNameplatesProfiles = {legacyValue=zNameplatesProfiles}
+  end
+  if type(zNameplatesProfiles.characters) ~= "table" then
+    zNameplatesProfiles.legacyCharacters = zNameplatesProfiles.characters
+    zNameplatesProfiles.characters = {}
+  end
+  zNameplatesProfiles.version = 1
+  return zNameplatesProfiles
+end
+
+function Z.RegisterCharacterProfile(hadExisting)
+  local store = Z.PrepareProfileStore()
+  local key = Z.CharacterProfileKey()
+  Z.activeCharacterProfile = key
+  -- Seed only from an established/imported profile. Logging a fresh character
+  -- first must not lock the account baseline to built-in defaults.
+  if type(store.defaultConfig) ~= "table" and (hadExisting or zNameplatesDB.importedFromPfUI) then
+    store.defaultConfig = CopyTable(Z.config)
+    store.defaultSource = key
+  end
+  local previous = store.characters[key]
+  if type(previous)=="table" and type(previous.config)=="table" and not zNameplatesDB.previousAccountProfile then
+    zNameplatesDB.previousAccountProfile = CopyTable(previous.config)
+  end
+  store.characters[key] = {config=Z.config}
+end
+
+function Z.GetCharacterProfileChoices()
+  local choices = {{"New-character default", "@default"}}
+  local store = Z.PrepareProfileStore()
+  local names = {}
+  for key, profile in pairs(store.characters) do
+    if key ~= Z.activeCharacterProfile and type(profile)=="table" and type(profile.config) == "table" then table.insert(names,key) end
+  end
+  table.sort(names)
+  for _, key in ipairs(names) do table.insert(choices,{key,key}) end
+  return choices
+end
+
+local function ApplyCharacterProfile(config)
+  if type(config) ~= "table" then return false end
+  -- Read before mutation in case the source is the current character itself.
+  local incoming = CopyTable(config)
+  zNameplatesDB.profileRestorePoints = zNameplatesDB.profileRestorePoints or {}
+  table.insert(zNameplatesDB.profileRestorePoints,{config=CopyTable(Z.config)})
+  table.wipe(Z.config)
+  for key,value in pairs(incoming) do Z.config[key]=value end
+  MigrateNameplateSettings(Z.config)
+  MergeMissing(Z.config,defaults)
+  RebaseTable(Z.config)
+  Z.PrepareProfileStore().characters[Z.CharacterProfileKey()] = {config=Z.config}
+  Z.Refresh()
+  return true
+end
+
+function Z.CopyCharacterProfile(source)
+  local store = Z.PrepareProfileStore()
+  local profile=store.characters[source]
+  local config = source=="@default" and (store.defaultConfig or defaults)
+    or type(profile)=="table" and profile.config
+  return ApplyCharacterProfile(config)
+end
+
+function Z.RestoreOriginalCharacterProfile()
+  return ApplyCharacterProfile(zNameplatesDB.profileMigrationSnapshot)
+end
+
+function Z.SetNewCharacterDefault()
+  local store = Z.PrepareProfileStore()
+  store.defaultHistory = store.defaultHistory or {}
+  if store.defaultConfig then
+    table.insert(store.defaultHistory,{config=CopyTable(store.defaultConfig),source=store.defaultSource})
+  end
+  store.defaultConfig, store.defaultSource = CopyTable(Z.config), Z.CharacterProfileKey()
   Z.Refresh()
 end
 
@@ -1396,9 +1511,16 @@ loader:SetScript("OnEvent", function()
   this:UnregisterEvent("ADDON_LOADED")
 
   zNameplatesDB = zNameplatesDB or {}
+  local hadExisting = type(zNameplatesDB.config) == "table"
+  local store = Z.PrepareProfileStore()
+  if hadExisting and zNameplatesDB.profileMigrationSnapshot == nil then
+    zNameplatesDB.profileMigrationSnapshot = CopyTable(zNameplatesDB.config)
+  end
   if type(zNameplatesDB.config) ~= "table" then
-    zNameplatesDB.config = CopyTable(defaults)
-    if type(pfUI_config) == "table" then
+    local registered = store.characters[Z.CharacterProfileKey()]
+    local inherited = type(registered)=="table" and registered.config or store.defaultConfig
+    zNameplatesDB.config = CopyTable(type(inherited)=="table" and inherited or defaults)
+    if type(inherited) ~= "table" and type(pfUI_config) == "table" then
       ImportKnown(zNameplatesDB.config, pfUI_config, defaults)
       -- pfUI only has the old combined overlap setting. Import it into both
       -- standalone controls so extraction does not silently change behavior.
@@ -1418,10 +1540,14 @@ loader:SetScript("OnEvent", function()
       zNameplatesDB.importedFromPfUI = true
     end
   end
+  if zNameplatesDB.profileMigrationSnapshot == nil then
+    zNameplatesDB.profileMigrationSnapshot = CopyTable(zNameplatesDB.config)
+  end
   MigrateNameplateSettings(zNameplatesDB.config)
   MergeMissing(zNameplatesDB.config, defaults)
   RebaseTable(zNameplatesDB.config)
   Z.config = zNameplatesDB.config
+  Z.RegisterCharacterProfile(hadExisting)
   zNameplatesDB.knownFlightPaths = zNameplatesDB.knownFlightPaths or {}
   zNameplatesDB.knownFlightNPCs = zNameplatesDB.knownFlightNPCs or {}
   zNameplatesDB.knownFlightNames = zNameplatesDB.knownFlightNames or {}

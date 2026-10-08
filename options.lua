@@ -3,6 +3,29 @@
 local Z = zNameplates
 local PATH = "Interface\\AddOns\\z_Nameplates"
 
+-- Keep dialogs spawned by our elevated settings panel above it, then restore
+-- their original strata when they close (the frames are shared Blizzard UI).
+local function RaiseSettingsDialog(dialog)
+  if not dialog then return end
+  if not dialog.znpRestoreLayerHook then
+    local previous=dialog:GetScript("OnHide")
+    dialog:SetScript("OnHide",function()
+      if previous then previous(dialog) end
+      if dialog.znpPreviousStrata then
+        local strata=dialog.znpPreviousStrata
+        dialog.znpPreviousStrata=nil
+        dialog:SetFrameStrata(strata)
+      end
+    end)
+    dialog.znpRestoreLayerHook=true
+  end
+  if not dialog.znpPreviousStrata then dialog.znpPreviousStrata=dialog:GetFrameStrata() end
+  dialog:SetFrameStrata("FULLSCREEN_DIALOG")
+end
+function Z.ShowSettingsConfirmation(id)
+  RaiseSettingsDialog(StaticPopup_Show(id))
+end
+
 local alignments = {
   { "Left", "LEFT" }, { "Center", "CENTER" }, { "Right", "RIGHT" },
 }
@@ -261,6 +284,130 @@ local pages = {
   },
 }
 
+-- Preserve the original setting definitions/paths while grouping them by task.
+local destinations = {
+  enemynamecolor="Text", friendlynamecolor="Text", critternamecolor="Text",
+  enemyclassc="Text", friendclassc="Text", friendclassnamec="Text",
+  namefightcolor="Text", showguildname="Text", nametextpos="Text",
+  width="Health", vertical_offset="Health", totemicons="Appearance",
+  targetglow="Health", glowcolor="Health", targetzoom="Health", targetzoomval="Health",
+  dummy_preview="Preview", dummy_count="Preview", rightclick="General", clickthreshold="General",
+  cluster_enabled="Crowds", cluster_health_band="Crowds",
+}
+local descriptions = {
+  General="Visibility, interaction and stacking behaviour.",
+  Health="Bar layout, health labels and visibility rules.",
+  ["Cast & Auras"]="Cast information, debuff placement and spell filters.",
+  Text="Fonts, readable labels and unit colours.",
+  Appearance="Borders, raid markers, quest icons and level placement.",
+  Chat="Speech attached to nearby speakers, with channel filters.",
+  Threat="Colour rules for combat, targeting and tag ownership.",
+  Distance="Range, smooth movement, distance size and visibility.",
+  Crowds="Reduce duplicate plates in large packs without losing targets.",
+  List="The movable nearby-enemy list (/znp list).",
+  Preview="Test your appearance settings without a real encounter.",
+  Advanced="Update rates and troubleshooting tools.",
+  Profiles="Independent settings per character. Copying never changes another character.",
+}
+local sectionRules = {
+  General={{"Visibility","showhostile showfriendly hide_blizzard_xp disable_hostile_in_friendly disable_friendly_in_friendly"},
+    {"Interaction","clickthrough rightclick clickthreshold"},{"Stacking","overlap_enemy overlap_friendly overlap_friendly_area overlap_combat"}},
+  Health={{"Layout","width vertical_offset offset heighthealth healthtexture verticalhealth"},
+    {"Health labels","showhp hptextpos hptextformat"},{"Visibility rules","enemynpc enemyplayer neutralnpc friendlynpc friendlyplayer critters totems fullhealth target"},
+    {"Target emphasis","targetglow glowcolor targetzoom targetzoomval targethighlight highlightcolor"}},
+  ["Cast & Auras"]={{"Cast bars","showcastbar targetcastbar spellname heightcast texture castbarcolor channelcolor castbardecimals"},
+    {"Debuff visibility","showdebuffs showdebuffs_hostile showdebuffs_friendly owndebuffs"},
+    {"Placement & timers","position debuffoffset debuffsize showstacks debufftimers debufftext debuffanim dynamicsize"},
+    {"Spell filters","filter blacklist whitelist"}},
+  Text={{"Fonts","use_unitfonts font_default font_size font_unit font_unit_size fontsize fontsize_friendly fontstyle fontstyle_friendly"},
+    {"Combat style","fontstyle_combat_enabled fontstyle_combat namefightcolor"},
+    {"Name colours","enemynamecolor friendlynamecolor critternamecolor enemyclassc friendclassc friendclassnamec"},
+    {"Labels & cooldowns","showguildname nametextpos abbrevname abbrevnum font"}},
+  Appearance={{"Raid markers","blizzard_raidicons raidiconpos raidiconoffx raidiconoffy raidiconsize"},
+    {"Quest & special icons","questicons flighticons questiconsize questiconoffset totemicons"},
+    {"Borders","color background default nameplates pixelperfect hidpi"},
+    {"Level placement","levelreference levelposition levelx levely"}},
+  Chat={{"Enable & placement","enabled show_without_plate position x y"},
+    {"Appearance & timing","duration fade scale fontsize width opacity background_color background_opacity fontstyle"},
+    {"Channels","say yell party raid guild whisper battleground instance emote npc"}},
+  Distance={{"Movement & range","smooth_transitions transition_duration nameplate_range"},
+    {"Distance sizing","distance_scale distance_min_scale"},{"Distance & line of sight","distance_alpha distance_min_alpha los_fade los_desaturation"}},
+}
+local help = {
+  clickthrough="Ignore normal plate clicks. Clusters remain clickable; interface windows always take priority.",
+  namefightcolor="Hostile enemies only. Friendly names keep their class/reaction colour; neutral names stay yellow.",
+  overlap_combat="Combat plates take priority over friendly-area overlap rules.",
+  neutralnpc="Unprovoked neutrals follow friendly visibility; provoked neutrals retain their health bar.",
+  nameplate_range="41 yd is the standard default. Extended range requires zAPI; maximum 80 yd.",
+  distance_min_scale="Minimum size reached at the nameplate-range limit. Full size within 8 yards.",
+  distance_min_alpha="Also sets the out-of-sight opacity floor. Distance and LOS fading do not compound.",
+  los_fade="Requires UnitXP sight checks. Controls opacity and colour independently of distance size.",
+  show_without_plate="Includes your own chat. Requires zAPI and a nearby, locatable player; not remote guild members.",
+  blacklist="Separate exact spell names with #. Used only when the blacklist filter is selected.",
+  whitelist="Separate exact spell names with #. Used only when the whitelist filter is selected.",
+  combatofftanks="Separate player names with #. These names identify your off-tanks.",
+  fontstyle_combat="Used only when the combat-style override is enabled.",
+  cluster_enabled="Targets, raid marks, players, friendly units and critters remain separate. Click a cluster for its lowest-HP member.",
+  cluster_health_band="Members move between health bands as their HP changes; displayed health is the average percentage.",
+  shown="Keep a compact frame visible even with no nearby enemies. You can drag its header.",
+  dummy_preview="Live test plates use your actual settings. Camera-aware placement requires zAPI.",
+  nameplates_mass="Background data rate in crowds. Position and distance animations remain per-frame.",
+    nameplates="An inherited border size of -1 uses the default border setting.",
+}
+local byName = {}
+for _, page in ipairs(pages) do byName[page.name] = {name=page.name,items={}} end
+for _, name in ipairs({"Crowds","List","Preview","Profiles"}) do byName[name] = {name=name,items={}} end
+for _, page in ipairs(pages) do
+  for _, item in ipairs(page.items) do
+    local key = item[3] and item[3][2]
+    local destination = item[3] and item[3][1]=="nameplates" and key and destinations[key]
+      or (item[1]=="button" and "Preview") or page.name
+    table.insert(byName[destination].items,item)
+  end
+end
+byName.Crowds.items[1][2] = "Cluster similar enemies"
+table.insert(byName.Crowds.items,{"slider","Start above this visible-plate count",{"nameplates","cluster_threshold"},10,100,1," plates"})
+table.insert(byName.Crowds.items,{"slider","Count badge size multiplier",{"nameplates","cluster_count_scale"},1,3,.05,"x",2})
+table.insert(byName.Crowds.items,{"color","Count badge colour / opacity",{"nameplates","cluster_count_color"}})
+byName.List.items = {
+  {"check","Show nearby-enemy list",{"combatlist","shown"}},
+  {"check","Collapse the list",{"combatlist","collapsed"}},
+  {"slider","List scale",{"combatlist","scale"},.5,2,.05,"x",2},
+  {"slider","List opacity",{"combatlist","opacity"},.2,1,.05,"",2},
+  {"slider","List width (0 = automatic)",{"combatlist","width"},0,420,10," px"},
+}
+table.insert(byName.Advanced.items,{"button","Dump target / mouseover layers",nil,function() if SlashCmdList.ZNPDUMP then SlashCmdList.ZNPDUMP() end end})
+byName.Profiles.items={
+  {"select","Copy settings from",{"profiles","source"},{{"New-character default","@default"}},"profiles"},
+  {"button","Copy selected settings...",nil,function() Z.ShowSettingsConfirmation("ZNP_COPY_PROFILE") end},
+  {"button","Use my settings as the default...",nil,function() Z.ShowSettingsConfirmation("ZNP_DEFAULT_PROFILE") end},
+  {"button","Restore my pre-profile settings...",nil,function() Z.ShowSettingsConfirmation("ZNP_RESTORE_PROFILE") end},
+}
+byName.Profiles.items[1].help="Each character keeps its own saves. Other characters appear here after logging in with this version. Copies create restore points."
+pages={}
+for _, name in ipairs({"General","Health","Cast & Auras","Text","Appearance","Chat","Threat","Distance","Crowds","List","Preview","Profiles","Advanced"}) do
+  local page=byName[name]
+  local sections=sectionRules[name] or {{"Settings",""}}
+  for _, item in ipairs(page.items) do
+    local path=item[3]; local key=path and path[table.getn(path)]
+    item.section=sections[table.getn(sections)][1]
+    for _, rule in ipairs(sections) do
+      if key and string.find(" "..rule[2].." "," "..key.." ",1,true) then item.section=rule[1]; break end
+    end
+    item.help=item.help or key and help[key]
+    item[2]=string.gsub(item[2],"color","colour")
+    if key=="notargalpha" then item[2]="Non-target opacity" end
+    if path and path[1]=="throttle" then item.help="Data updates per second. Higher rates cost more CPU; visual movement remains smooth." end
+    if path and path[1]=="nameplates" and key=="namefightcolor" then item[2]="Red names on hostile enemies in combat" end
+  end
+  local ordered={}
+  for _, rule in ipairs(sections) do
+    for _, item in ipairs(page.items) do if item.section==rule[1] then table.insert(ordered,item) end end
+  end
+  page.items=ordered; table.insert(pages,page)
+end
+Z.settingsPages=pages
+
 local function GetValue(path)
   local value = Z.config
   if not value then return "" end
@@ -268,41 +415,69 @@ local function GetValue(path)
   return value
 end
 
+local history = {}
 local function SetValue(path, value)
+  local oldValue = GetValue(path)
+  if tostring(oldValue)==tostring(value) then return end
+  table.insert(history,{path=path,value=oldValue})
+  if table.getn(history)>50 then table.remove(history,1) end
   local target = Z.config
   for i = 1, table.getn(path) - 1 do target = target[path[i]] end
   target[path[table.getn(path)]] = tostring(value)
   Z.Refresh()
 end
 
+local function DependencyEnabled(widget)
+  local path=widget.path
+  if not path then return true end
+  local key=path[table.getn(path)]
+  if path[1]=="platechat" and key~="enabled" then return GetValue({"platechat","enabled"})=="1" end
+  local dependencies={
+    targetzoomval="targetzoom", glowcolor="targetglow", highlightcolor="targethighlight",
+    hptextpos="showhp", hptextformat="showhp", targetcastbar="showcastbar", spellname="showcastbar", heightcast="showcastbar",
+    fontsize_friendly=nil, distance_min_scale="distance_scale", transition_duration="smooth_transitions", los_desaturation="los_fade",
+    cluster_threshold="cluster_enabled", cluster_health_band="cluster_enabled", cluster_count_scale="cluster_enabled", cluster_count_color="cluster_enabled",
+    showdebuffs_hostile="showdebuffs", showdebuffs_friendly="showdebuffs", owndebuffs="showdebuffs", debuffsize="showdebuffs", debuffoffset="showdebuffs",
+  }
+  if path[1]=="nameplates" and dependencies[key] then return GetValue({"nameplates",dependencies[key]})=="1" end
+  if key=="fontstyle_combat" then return GetValue({"nameplates","name","fontstyle_combat_enabled"})=="1" end
+  if path[1]=="global" and (key=="font_unit" or key=="font_unit_size") then return GetValue({"nameplates","use_unitfonts"})=="1" end
+  if path[2]=="debuffs" and key=="blacklist" then return GetValue({"nameplates","debuffs","filter"})=="blacklist" end
+  if path[2]=="debuffs" and key=="whitelist" then return GetValue({"nameplates","debuffs","filter"})=="whitelist" end
+  return true
+end
+
 local frame = CreateFrame("Frame", "zNameplatesOptions", UIParent)
 frame:SetWidth(820)
-frame:SetHeight(590)
+frame:SetHeight(560)
 frame:SetPoint("CENTER", UIParent, "CENTER", 0, 20)
-frame:SetFrameStrata("DIALOG")
+-- Depth-sorted plates and their chat labels can reach DIALOG. An opaque panel
+-- on FULLSCREEN occludes them without changing any world-plate depth ordering.
+frame:SetFrameStrata("FULLSCREEN")
 frame:SetMovable(true)
 frame:EnableMouse(true)
 frame:RegisterForDrag("LeftButton")
 frame:SetScript("OnDragStart", function() this:StartMoving() end)
 frame:SetScript("OnDragStop", function() this:StopMovingOrSizing() end)
-frame:SetBackdrop({ bgFile="Interface\\DialogFrame\\UI-DialogBox-Background", edgeFile="Interface\\DialogFrame\\UI-DialogBox-Border", tile=true, tileSize=32, edgeSize=32, insets={left=11,right=12,top=12,bottom=11} })
-frame:SetBackdropColor(0.03, 0.03, 0.03, 0.90)
-frame:SetBackdropBorderColor(0.65, 0.65, 0.65, 1)
+frame:SetBackdrop({ bgFile="Interface\\BUTTONS\\WHITE8X8", edgeFile="Interface\\Tooltips\\UI-Tooltip-Border", tile=false, edgeSize=12, insets={left=4,right=4,top=4,bottom=4} })
+frame:SetBackdropColor(.035,.045,.06,1)
+frame:SetBackdropBorderColor(.2,.25,.3,1)
+if frame.SetClampedToScreen then frame:SetClampedToScreen(true) end
 frame:Hide()
 
 local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-title:SetPoint("TOP", frame, "TOP", 0, -18)
+title:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -12)
 title:SetText("zNameplates")
 local subtitle = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-subtitle:SetPoint("TOP", title, "BOTTOM", 0, -5)
-subtitle:SetText("Standalone nameplates and nameplate-only settings")
+subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -3)
+subtitle:SetText("Settings apply immediately")
 subtitle:SetTextColor(0.75, 0.75, 0.75, 1)
 
 local divider = frame:CreateTexture(nil, "ARTWORK")
 divider:SetTexture("Interface\\BUTTONS\\WHITE8X8")
 divider:SetVertexColor(0.55, 0.55, 0.55, 0.25)
-divider:SetPoint("TOP", frame, "TOP", 0, -100)
-divider:SetPoint("BOTTOM", frame, "BOTTOM", 0, 70)
+divider:SetPoint("TOPLEFT", frame, "TOPLEFT", 158, -56)
+divider:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 158, 50)
 divider:SetWidth(1)
 
 local closeX = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
@@ -312,12 +487,48 @@ local tabFrames = {}
 local tabButtons = {}
 local widgets = {}
 local activeTab = 1
+local searchText = ""
+local scroll = CreateFrame("ScrollFrame","zNameplatesSettingsScroll",frame,"UIPanelScrollFrameTemplate")
+scroll:SetPoint("TOPLEFT",frame,"TOPLEFT",170,-100)
+scroll:SetPoint("BOTTOMRIGHT",frame,"BOTTOMRIGHT",-30,52)
+local content=CreateFrame("Frame",nil,scroll)
+content:SetWidth(620); content:SetHeight(1)
+scroll:SetScrollChild(content)
+local pageTitle=frame:CreateFontString(nil,"OVERLAY","GameFontNormalLarge")
+pageTitle:SetPoint("TOPLEFT",frame,"TOPLEFT",178,-60)
+local pageDescription=frame:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+pageDescription:SetPoint("TOPLEFT",pageTitle,"BOTTOMLEFT",0,-4)
+pageDescription:SetWidth(600); pageDescription:SetJustifyH("LEFT")
+pageDescription:SetTextColor(.65,.72,.8,1)
+local search=CreateFrame("EditBox",nil,frame,"InputBoxTemplate")
+search:SetPoint("TOPRIGHT",frame,"TOPRIGHT",-60,-16)
+search:SetWidth(225); search:SetHeight(24); search:SetAutoFocus(false)
+local searchHint=search:CreateFontString(nil,"OVERLAY","GameFontDisableSmall")
+searchHint:SetPoint("LEFT",search,"LEFT",5,0); searchHint:SetText("Search all settings...")
+local clearSearch=CreateFrame("Button",nil,frame,"UIPanelButtonTemplate")
+clearSearch:SetPoint("LEFT",search,"RIGHT",4,0); clearSearch:SetWidth(22); clearSearch:SetHeight(22); clearSearch:SetText("x")
+clearSearch:SetScript("OnClick",function() search:SetText(""); search:ClearFocus() end)
+local sectionHeaders={}
+local LayoutSettings
+local function SkinButton(button)
+  button:SetNormalTexture(""); button:SetPushedTexture(""); button:SetDisabledTexture("")
+  button:SetBackdrop({bgFile="Interface\\BUTTONS\\WHITE8X8",edgeFile="Interface\\BUTTONS\\WHITE8X8",edgeSize=1})
+  button:SetBackdropColor(.09,.12,.16,1); button:SetBackdropBorderColor(.22,.28,.35,1)
+  button:SetHighlightTexture("Interface\\BUTTONS\\WHITE8X8")
+  local highlight=button:GetHighlightTexture()
+  if highlight then highlight:SetVertexColor(.25,.7,.65,.14) end
+  local caption=button:GetFontString()
+  if caption then caption:SetTextColor(.9,.94,.98,1) end
+end
+title:SetTextColor(.92,.97,1,1)
 
 local function Label(parent, text, x, y)
   local label = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   label:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
-  label:SetWidth(230)
+  label:SetWidth(295)
+  label:SetHeight(24)
   label:SetJustifyH("LEFT")
+  label:SetJustifyV("TOP")
   label:SetTextColor(0.95, 0.95, 0.95, 1)
   label:SetText(text)
   return label
@@ -326,7 +537,8 @@ end
 local dropdown = CreateFrame("Frame", "zNameplatesOptionDropdown", frame)
 dropdown:SetFrameStrata("TOOLTIP")
 dropdown:SetFrameLevel(frame:GetFrameLevel() + 30)
-dropdown:SetWidth(180)
+dropdown:SetWidth(265)
+if dropdown.SetClampedToScreen then dropdown:SetClampedToScreen(true) end
 dropdown:SetBackdrop({
   bgFile = "Interface\\BUTTONS\\WHITE8X8",
   edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -411,51 +623,59 @@ local function ApplyColor(path, oldValue, rgbOnly)
 end
 
 local function CreateWidget(parent, item, index)
-  -- Keep pages at two readable columns. Thirteen rows fit comfortably above
-  -- the footer and prevent the extra name-color controls from creating a
-  -- clipped third column on the Health tab.
-  local col = math.floor((index - 1) / 14)
-  local row = math.mod(index - 1, 14)
-  local x = 22 + col * 390
-  local y = -18 - row * 34
+  -- One bounded label/control row inside the clipped scroll viewport.
+  local rowFrame=CreateFrame("Frame",nil,parent)
+  rowFrame:SetWidth(620); rowFrame:SetHeight(item[1]=="preview" and 60 or item[1]=="slider" and 38 or 32)
+  local separator=rowFrame:CreateTexture(nil,"BACKGROUND")
+  separator:SetTexture("Interface\\BUTTONS\\WHITE8X8"); separator:SetVertexColor(.35,.4,.5,.13)
+  separator:SetPoint("BOTTOMLEFT",rowFrame,"BOTTOMLEFT",8,0)
+  separator:SetPoint("BOTTOMRIGHT",rowFrame,"BOTTOMRIGHT",-8,0); separator:SetHeight(1)
+  parent=rowFrame
+  local x,y=8,-7
   local kind, text, path, extra = item[1], item[2], item[3], item[4]
-  local widget = { kind=kind, path=path, extra=extra }
+  local widget = { kind=kind, path=path, extra=extra, row=rowFrame, item=item }
 
   if kind == "check" then
     local check = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
     check:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y + 5)
-    check:SetWidth(24); check:SetHeight(24)
+    check:SetWidth(22); check:SetHeight(22)
     local label = Label(parent, text, x + 27, y)
-    label:SetWidth(300)
+    label:SetWidth(545)
     check:SetScript("OnClick", function() SetValue(path, this:GetChecked() and "1" or "0") end)
     widget.control = check
+    local labelButton=CreateFrame("Button",nil,parent)
+    labelButton:SetPoint("TOPLEFT",parent,"TOPLEFT",x+27,y+5)
+    labelButton:SetWidth(550); labelButton:SetHeight(28)
+    labelButton:SetScript("OnClick",function() SetValue(path,GetValue(path)=="1" and "0" or "1") end)
+    widget.labelButton=labelButton
   elseif kind == "button" then
     local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
     button:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y + 2)
-    button:SetWidth(155); button:SetHeight(24)
+    button:SetWidth(260); button:SetHeight(24)
     button:SetText(text)
     button:SetScript("OnClick", function()
       if type(extra) == "function" then extra() end
     end)
     widget.control = button
+    SkinButton(button)
   elseif kind == "slider" then
     local suffix = item[7] or "%"
     local decimals = item[8] or 0
     local multiplier = 10 ^ decimals
     local label = Label(parent, text, x, y)
-    label:SetWidth(220)
+    label:SetWidth(295)
     local sliderName = "zNameplatesOptionSlider" .. tostring(table.getn(widgets) + 1)
     local slider = CreateFrame("Slider", sliderName, parent, "OptionsSliderTemplate")
-    slider:SetPoint("TOPRIGHT", parent, "TOPLEFT", x + 350, y + 2)
-    slider:SetWidth(125); slider:SetHeight(16)
+    slider:SetPoint("TOPRIGHT", parent, "TOPLEFT", x + 495, y + 2)
+    slider:SetWidth(165); slider:SetHeight(16)
     slider:SetMinMaxValues(item[4] or 0, item[5] or 100)
     slider:SetValueStep(item[6] or 1)
     if getglobal then
       local low = getglobal(sliderName .. "Low")
       local high = getglobal(sliderName .. "High")
       local title = getglobal(sliderName .. "Text")
-      if low then low:SetText((item[4] or 0) .. suffix) end
-      if high then high:SetText((item[5] or 100) .. suffix) end
+      if low then low:SetText((item[4] or 0) .. suffix); low:SetTextColor(.6,.66,.73,1) end
+      if high then high:SetText((item[5] or 100) .. suffix); high:SetTextColor(.6,.66,.73,1) end
       if title then title:SetText("") end
     end
     slider:SetScript("OnValueChanged", function()
@@ -465,7 +685,7 @@ local function CreateWidget(parent, item, index)
       value = math.floor(value * multiplier + .5) / multiplier
       local shown = decimals > 0 and string.format("%." .. decimals .. "f", value)
         or tostring(math.floor(value + .5))
-      label:SetText(text .. ": " .. shown .. suffix)
+      if widget.valueControl and not widget.valueControl.zNameplatesEditing then widget.valueControl:SetText(shown) end
       if not this.zNameplatesUpdating then SetValue(path, value) end
     end)
     widget.control = slider
@@ -473,11 +693,27 @@ local function CreateWidget(parent, item, index)
     widget.text = text
     widget.suffix = suffix
     widget.decimals = decimals
+    local exact=CreateFrame("EditBox",nil,parent,"InputBoxTemplate")
+    exact:SetPoint("TOPRIGHT",parent,"TOPLEFT",x+590,y+5)
+    exact:SetWidth(70); exact:SetHeight(22); exact:SetAutoFocus(false)
+    local function CommitNumber()
+      local number=tonumber(exact:GetText())
+      if number then
+        number=math.max(item[4],math.min(item[5],number))
+        number=math.floor(number/(item[6] or 1)+.5)*(item[6] or 1)
+        SetValue(path,math.floor(number*multiplier+.5)/multiplier)
+      else exact:SetText(GetValue(path)) end
+    end
+    exact:SetScript("OnEditFocusGained",function() this.zNameplatesEditing=true end)
+    exact:SetScript("OnEnterPressed",function() CommitNumber(); exact:ClearFocus() end)
+    exact:SetScript("OnEscapePressed",function() exact:SetText(GetValue(path)); exact:ClearFocus() end)
+    exact:SetScript("OnEditFocusLost",function() exact.zNameplatesEditing=nil; CommitNumber() end)
+    widget.valueControl=exact
   elseif kind == "input" then
     Label(parent, text, x, y)
     local input = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
-    input:SetPoint("TOPRIGHT", parent, "TOPLEFT", x + 350, y + 5)
-    input:SetWidth(item[4] or 105); input:SetHeight(24)
+    input:SetPoint("TOPRIGHT", parent, "TOPLEFT", x + 590, y + 5)
+    input:SetWidth(265); input:SetHeight(24)
     input:SetAutoFocus(false)
     input:SetTextColor(1, 1, 1, 1)
     input:SetJustifyH("LEFT")
@@ -493,28 +729,31 @@ local function CreateWidget(parent, item, index)
   elseif kind == "select" then
     Label(parent, text, x, y)
     local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    button:SetPoint("TOPRIGHT", parent, "TOPLEFT", x + 350, y + 3)
-    button:SetWidth(150); button:SetHeight(23)
+    button:SetPoint("TOPRIGHT", parent, "TOPLEFT", x + 590, y + 3)
+    button:SetWidth(265); button:SetHeight(24)
+    local caption=button:GetFontString()
+    if caption then caption:ClearAllPoints(); caption:SetPoint("LEFT",button,"LEFT",10,0); caption:SetPoint("RIGHT",button,"RIGHT",-24,0); caption:SetJustifyH("LEFT") end
     local arrow = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     arrow:SetPoint("RIGHT", button, "RIGHT", -8, 0)
     arrow:SetText("v")
     widget.values = item[4]
     widget.control = button
     widget.fontSelect = item[5] == "font"
+    SkinButton(button)
     button:SetScript("OnClick", function() OpenDropdown(widget) end)
   elseif kind == "color" then
     Label(parent, text, x, y)
     local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    button:SetPoint("TOPRIGHT", parent, "TOPLEFT", x + 350, y + 3)
-    button:SetWidth(150); button:SetHeight(23)
+    button:SetPoint("TOPRIGHT", parent, "TOPLEFT", x + 590, y + 3)
+    button:SetWidth(265); button:SetHeight(24)
     button:SetText("   Edit colour")
     local swatchBorder = button:CreateTexture(nil, "ARTWORK")
     swatchBorder:SetPoint("LEFT", button, "LEFT", 7, 0)
-    swatchBorder:SetWidth(20); swatchBorder:SetHeight(20)
+    swatchBorder:SetWidth(18); swatchBorder:SetHeight(18)
     swatchBorder:SetTexture("Interface\\BUTTONS\\WHITE8X8")
     swatchBorder:SetVertexColor(.08, .08, .08, 1)
     local swatch = button:CreateTexture(nil, "OVERLAY")
-    swatch:SetPoint("CENTER", swatchBorder, "CENTER", 0, 0); swatch:SetWidth(16); swatch:SetHeight(16)
+    swatch:SetPoint("CENTER", swatchBorder, "CENTER", 0, 0); swatch:SetWidth(14); swatch:SetHeight(14)
     swatch:SetTexture("Interface\\BUTTONS\\WHITE8X8")
     button:SetScript("OnClick", function()
       local oldValue = GetValue(path)
@@ -526,67 +765,188 @@ local function CreateWidget(parent, item, index)
       ColorPickerFrame.hasOpacity = not rgbOnly
       ColorPickerFrame.opacity = 1 - (tonumber(a) or 1)
       ColorPickerFrame:SetColorRGB(tonumber(r) or 1, tonumber(g) or 1, tonumber(b) or 1)
+      RaiseSettingsDialog(ColorPickerFrame)
       ColorPickerFrame:Show()
     end)
     widget.control = button
     widget.swatch = swatch
+    SkinButton(button)
   elseif kind == "preview" then
     local preview = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     preview:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y - 3)
-    preview:SetWidth(350); preview:SetHeight(28)
+    preview:SetWidth(585); preview:SetHeight(48)
     preview:SetJustifyH("CENTER")
     preview:SetText(text)
     widget.control = preview
   end
+  if kind~="preview" then
+    widget.control:SetScript("OnEnter",function()
+      GameTooltip:SetOwner(widget.control,"ANCHOR_RIGHT")
+      GameTooltip:SetText(text)
+      if item.help then GameTooltip:AddLine(item.help,.7,.78,.86,true) end
+      if path then GameTooltip:AddLine(table.concat(path," / "),.45,.5,.6,true) end
+      GameTooltip:Show()
+    end)
+    widget.control:SetScript("OnLeave",function() GameTooltip:Hide() end)
+  end
   table.insert(widgets, widget)
+  return widget
 end
 
 local function ShowTab(index)
   dropdown:Hide()
   activeTab = index
+  if searchText~="" then search:SetText("") end
   for i = 1, table.getn(tabFrames) do
-    if i == index then tabFrames[i]:Show(); tabButtons[i]:Disable()
-    else tabFrames[i]:Hide(); tabButtons[i]:Enable() end
+    local selected=i==index
+    tabButtons[i].selected:SetShown(selected)
   end
+  scroll:SetVerticalScroll(0)
+  if LayoutSettings then LayoutSettings() end
   frame:Refresh()
 end
 
-local tabStep = math.floor((820 - 40) / table.getn(pages))
 for pageIndex = 1, table.getn(pages) do
   local tabIndex = pageIndex
   local pageData = pages[pageIndex]
   local button = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-  button:SetPoint("TOPLEFT", frame, "TOPLEFT", 20 + (pageIndex - 1) * tabStep, -68)
-  button:SetWidth(tabStep - 5); button:SetHeight(24); button:SetText(pageData.name)
+  button:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -60-(pageIndex-1)*30)
+  button:SetWidth(136); button:SetHeight(26); button:SetText(pageData.name)
+  SkinButton(button)
+  button.selected=button:CreateTexture(nil,"OVERLAY")
+  button.selected:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+  button.selected:SetVertexColor(.2,.82,.72,1)
+  button.selected:SetPoint("TOPLEFT",button,"TOPLEFT",0,0); button.selected:SetPoint("BOTTOMLEFT",button,"BOTTOMLEFT",0,0); button.selected:SetWidth(3)
   button:SetScript("OnClick", function() ShowTab(tabIndex) end)
   tabButtons[pageIndex] = button
 
-  local page = CreateFrame("Frame", nil, frame)
-  page:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, -103)
-  page:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -20, 75)
-  tabFrames[pageIndex] = page
-  for itemIndex = 1, table.getn(pageData.items) do CreateWidget(page, pageData.items[itemIndex], itemIndex) end
+  tabFrames[pageIndex] = content
+  for itemIndex = 1, table.getn(pageData.items) do
+    local widget=CreateWidget(content,pageData.items[itemIndex],itemIndex)
+    widget.page=pageIndex
+  end
 end
 
+LayoutSettings=function()
+  local y,headers,matches=0,0,0
+  local previousSection
+  for _, widget in ipairs(widgets) do
+    local page=pages[widget.page]
+    local haystack=string.lower(page.name.." "..widget.item.section.." "..widget.item[2].." "..(widget.item.help or "")
+      .." "..(widget.path and table.concat(widget.path," ") or ""))
+    local visible=searchText~="" and string.find(haystack,searchText,1,true) or (searchText=="" and widget.page==activeTab)
+    if visible then
+      local section=page.name.." / "..widget.item.section
+      if section~=previousSection then
+        headers=headers+1
+        local header=sectionHeaders[headers]
+        if not header then header=Label(content,"",12,0); sectionHeaders[headers]=header end
+        header:ClearAllPoints(); header:SetPoint("TOPLEFT",content,"TOPLEFT",8,-y-4)
+        header:SetWidth(600); header:SetHeight(18); header:SetText(searchText~="" and section or widget.item.section)
+        header:SetTextColor(.3,.86,.76,1); header:Show()
+        y=y+22; previousSection=section
+      end
+      widget.row:ClearAllPoints(); widget.row:SetPoint("TOPLEFT",content,"TOPLEFT",0,-y)
+      widget.row:Show(); y=y+widget.row:GetHeight(); matches=matches+1
+    else widget.row:Hide() end
+  end
+  for i=headers+1,table.getn(sectionHeaders) do sectionHeaders[i]:Hide() end
+  content:SetHeight(math.max(1,y+12))
+  pageTitle:SetText(searchText~="" and "Search results" or pages[activeTab].name)
+  pageDescription:SetText(searchText~="" and (matches.." matching controls across all categories") or descriptions[pages[activeTab].name])
+end
+search:SetScript("OnTextChanged",function()
+  searchText=string.lower(search:GetText() or "")
+  if searchText=="" then searchHint:Show() else searchHint:Hide() end
+  dropdown:Hide(); scroll:SetVerticalScroll(0); LayoutSettings()
+end)
+search:SetScript("OnEscapePressed",function() search:SetText(""); search:ClearFocus() end)
+scroll:EnableMouseWheel(true)
+scroll:SetScript("OnMouseWheel",function()
+  dropdown:Hide()
+  local maximum=math.max(0,content:GetHeight()-scroll:GetHeight())
+  scroll:SetVerticalScroll(math.max(0,math.min(maximum,scroll:GetVerticalScroll()-(arg1 or 0)*56)))
+end)
+
 local reset = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-reset:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 25, 25)
-reset:SetWidth(120); reset:SetHeight(25); reset:SetText("Reset defaults")
-reset:SetScript("OnClick", function() Z.Reset() end)
+reset:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 12, 12)
+reset:SetWidth(104); reset:SetHeight(24); reset:SetText("Reset all...")
+local pendingPage
+StaticPopupDialogs=StaticPopupDialogs or {}
+StaticPopupDialogs.ZNP_RESET_ALL={text="Reset all zNameplates settings? Your current settings will be replaced.",button1="Reset all",button2="Cancel",
+  OnAccept=function() table.wipe(history); Z.Reset() end,timeout=0,whileDead=1,hideOnEscape=1}
+StaticPopupDialogs.ZNP_COPY_PROFILE={text="Copy the selected settings into this character? A restore point is kept; the source character is not changed.",button1="Copy settings",button2="Cancel",
+  OnAccept=function() table.wipe(history); Z.CopyCharacterProfile(GetValue({"profiles","source"})) end,timeout=0,whileDead=1,hideOnEscape=1}
+StaticPopupDialogs.ZNP_DEFAULT_PROFILE={text="Use this character's settings as the default for new characters? Existing characters will keep their own settings.",button1="Set default",button2="Cancel",
+  OnAccept=function() Z.SetNewCharacterDefault() end,timeout=0,whileDead=1,hideOnEscape=1}
+StaticPopupDialogs.ZNP_RESTORE_PROFILE={text="Restore the settings this character had before profiles were added? The current settings are kept as a restore point.",button1="Restore",button2="Cancel",
+  OnAccept=function() table.wipe(history); Z.RestoreOriginalCharacterProfile() end,timeout=0,whileDead=1,hideOnEscape=1}
+StaticPopupDialogs.ZNP_RESET_PAGE={text="Reset this category's settings to their defaults? Other categories will not change.",button1="Reset category",button2="Cancel",
+  OnAccept=function()
+    local page=pages[pendingPage]
+    if not page then return end
+    for _, item in ipairs(page.items) do
+      if item[3] then
+        local value=Z.GetDefaultSetting(item[3])
+        if value~=nil then
+          local target=Z.config
+          for i=1,table.getn(item[3])-1 do target=target[item[3][i]] end
+          target[item[3][table.getn(item[3])]]=tostring(value)
+        end
+      end
+    end
+    table.wipe(history); Z.Refresh()
+  end,timeout=0,whileDead=1,hideOnEscape=1}
+reset:SetScript("OnClick",function() Z.ShowSettingsConfirmation("ZNP_RESET_ALL") end)
+local resetPage=CreateFrame("Button",nil,frame,"UIPanelButtonTemplate")
+resetPage:SetPoint("LEFT",reset,"RIGHT",6,0); resetPage:SetWidth(120); resetPage:SetHeight(24); resetPage:SetText("Reset category...")
+resetPage:SetScript("OnClick",function() pendingPage=activeTab; Z.ShowSettingsConfirmation("ZNP_RESET_PAGE") end)
+local undo=CreateFrame("Button",nil,frame,"UIPanelButtonTemplate")
+undo:SetPoint("LEFT",resetPage,"RIGHT",6,0); undo:SetWidth(88); undo:SetHeight(24); undo:SetText("Undo last")
+undo:SetScript("OnClick",function()
+  local entry=table.remove(history)
+  if not entry then return end
+  local target=Z.config
+  for i=1,table.getn(entry.path)-1 do target=target[entry.path[i]] end
+  target[entry.path[table.getn(entry.path)]]=entry.value
+  Z.Refresh()
+end)
 
 local reload = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-reload:SetPoint("LEFT", reset, "RIGHT", 8, 0)
-reload:SetWidth(120); reload:SetHeight(25); reload:SetText("Reload UI")
+reload:SetPoint("LEFT", undo, "RIGHT", 6, 0)
+reload:SetWidth(88); reload:SetHeight(24); reload:SetText("Reload UI")
 reload:SetScript("OnClick", ReloadUI)
 
 local close = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-close:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -25, 25)
-close:SetWidth(120); close:SetHeight(25); close:SetText("Close")
+close:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -12, 12)
+close:SetWidth(88); close:SetHeight(24); close:SetText("Close")
 close:SetScript("OnClick", function() frame:Hide() end)
+for _,button in ipairs({reset,resetPage,undo,reload,close,clearSearch}) do SkinButton(button) end
+local status=frame:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+status:SetPoint("BOTTOMLEFT",frame,"BOTTOMLEFT",12,42)
+status:SetTextColor(.55,.64,.72,1)
+
+local function MediaKey(value)
+  value=string.lower(tostring(value or ""))
+  value=string.gsub(value,"%.tga$",""); value=string.gsub(value,"%.blp$","")
+  return value
+end
 
 function frame:Refresh()
   if not Z.config then return end
+  frame:SetScale(math.min(1,(UIParent:GetWidth()-24)/820,(UIParent:GetHeight()-24)/560))
+  if table.getn(history)>0 then undo:Enable() else undo:Disable() end
+  status:SetText("Profile: "..(Z.activeCharacterProfile or "this character").."  |  zAPI: "..(type(zAPI)=="function" and "available" or "not loaded").."  |  LOS: "..(type(UnitXP)=="function" and "available" or "not loaded"))
   for i = 1, table.getn(widgets) do
     local widget = widgets[i]
+    local enabled=DependencyEnabled(widget)
+    widget.row:SetAlpha(enabled and 1 or .45)
+    if widget.control.Enable and widget.control.Disable then
+      if enabled then widget.control:Enable() else widget.control:Disable() end
+    end
+    if widget.control.EnableMouse and widget.kind~="preview" then widget.control:EnableMouse(enabled) end
+    if widget.valueControl then widget.valueControl:EnableMouse(enabled) end
+    if widget.labelButton then widget.labelButton:EnableMouse(enabled) end
     if widget.path then
       local value = GetValue(widget.path)
       if widget.kind == "check" then widget.control:SetChecked(value == "1")
@@ -597,11 +957,14 @@ function frame:Refresh()
         widget.control.zNameplatesUpdating = nil
         local shown = widget.decimals > 0 and string.format("%." .. widget.decimals .. "f", amount)
           or tostring(math.floor(amount + .5))
-        widget.label:SetText(widget.text .. ": " .. shown .. widget.suffix)
+        widget.label:SetText(widget.text)
+        if widget.valueControl and not widget.valueControl.zNameplatesEditing then widget.valueControl:SetText(shown) end
       elseif widget.kind == "input" and not widget.control.zNameplatesEditing then widget.control:SetText(value or "")
       elseif widget.kind == "select" then
+        if widget.item[5]=="profiles" and Z.GetCharacterProfileChoices then widget.values=Z.GetCharacterProfileChoices() end
         local label = tostring(value or "")
-        for j = 1, table.getn(widget.values) do if widget.values[j][2] == value then label = widget.values[j][1] end end
+        for j = 1, table.getn(widget.values) do if MediaKey(widget.values[j][2]) == MediaKey(value) then label = widget.values[j][1] end end
+        if string.find(label,"\\",1,true) then label=string.gsub(label,"^.*\\",""); label=string.gsub(label,"%.[^%.]+$","") end
         widget.control:SetText(label)
         if widget.fontSelect and widget.control.GetFontString then
           local selection = widget.control:GetFontString()
@@ -627,7 +990,7 @@ function frame:Refresh()
         or (isFriendly
           and (Z.config.nameplates.name.fontstyle_friendly or Z.config.nameplates.name.fontstyle or "")
           or (Z.config.nameplates.name.fontstyle or ""))
-      widget.control:SetFont(font, math.max(10, size + 2), style)
+      widget.control:SetFont(font, size, style)
       widget.control:SetAlpha(isCombat and Z.config.nameplates.name.fontstyle_combat_enabled ~= "1" and .45 or 1)
     end
   end
@@ -1062,7 +1425,13 @@ do
   function list:Refresh()
     local settings = ListSettings()
     if not settings then return end
-    local width = math.max(160, math.max(75, tonumber(Z.config.nameplates.width) or 120) + 20 + LIST_PADDING * 2 + 1)
+    if settings.shown=="1" and not self:IsShown() then self:Show()
+    elseif settings.shown=="0" and self:IsShown() then self:Hide(); return end
+    self:SetScale(tonumber(settings.scale) or 1)
+    self:SetAlpha(tonumber(settings.opacity) or 1)
+    local customWidth=tonumber(settings.width) or 0
+    local width = customWidth>0 and math.max(160,customWidth)
+      or math.max(160, math.max(75, tonumber(Z.config.nameplates.width) or 120) + 20 + LIST_PADDING * 2 + 1)
     local fontSize = tonumber((Z.config.nameplates.use_unitfonts == "1") and Z.config.global.font_unit_size or Z.config.global.font_size) or 12
     local rowHeight = fontSize + math.max(5, tonumber(Z.config.nameplates.heighthealth) or 8) + 5
     local total = BuildCombatList()

@@ -31,7 +31,6 @@ function Z.RenderPlateCluster(plate)
     badge:SetWidth(1); badge:SetHeight(1)
     badge:EnableMouse(false)
     badge.text = badge:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    badge.text:SetTextColor(1, .92, .15, 1)
     badge.text:SetShadowColor(0, 0, 0, 1)
     badge.text:SetShadowOffset(1, -1)
     badge.text:SetPoint("LEFT", plate.name, "RIGHT", 5, 0)
@@ -49,10 +48,13 @@ function Z.RenderPlateCluster(plate)
   plate.clusterRenderGroup, plate.clusterRenderCount, plate.clusterRenderAverage = group, group.count, group.average
   plate.name:SetText(group.name)
   local C = Z.config
+  local r, g, b, a = Z.GetStringColor(C.nameplates.cluster_count_color or "1,.92,.15,1")
+  badge.text:SetTextColor(r, g, b, a)
   local font = plate.name:GetFont()
   local baseSize = tonumber(C.nameplates.name and C.nameplates.name.fontsize)
     or tonumber(C.global and C.global.font_unit_size) or 12
-  badge.text:SetFont(font or Z.font_unit or Z.font_default, math.max(14, baseSize * 1.6), "THICKOUTLINE")
+  badge.text:SetFont(font or Z.font_unit or Z.font_default,
+    math.max(14, baseSize * (tonumber(C.nameplates.cluster_count_scale) or 1.6)), "THICKOUTLINE")
   badge.text:SetText("x" .. group.count)
   plate.health:Show()
   plate.health:SetMinMaxValues(0, 100)
@@ -81,7 +83,8 @@ end
 
 function Z.UpdatePlateClusters(now, visible, count, dirty)
   local C = Z.config.nameplates
-  local active = C.cluster_enabled == "1" and count > 30
+  local threshold = math.max(10, math.min(100, tonumber(C.cluster_threshold) or 30))
+  local active = C.cluster_enabled == "1" and count > threshold
   if not dirty and active == previousActive and nextUpdate and now < nextUpdate then return false end
   previousActive, nextUpdate = active, now + .1
   for _, group in pairs(groups) do

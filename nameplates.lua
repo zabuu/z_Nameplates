@@ -1768,7 +1768,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     nameplate.glow:SetVertexColor(glowr, glowg, glowb, glowa)
 
     nameplate.raidicon:ClearAllPoints()
-    nameplate.raidicon:SetPoint("BOTTOM", nameplate.health, "TOP", C.nameplates.raidiconoffx, C.nameplates.raidiconoffy)
+    zNameplates.PositionRaidIcon(nameplate)
     zNameplates.SetSmoothFontString(nameplate.level, font, font_size, font_style)
     nameplate.raidicon:SetSize(C.nameplates.raidiconsize, C.nameplates.raidiconsize)
 
@@ -2568,19 +2568,11 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
   -- gate compares cheap integers and only formats when the displayed value
   -- would actually differ. Reset via lastEndTime-changed branch above.
   local function SetCastbarText(castbar, remaining)
-    local rounded
-    if C.unitframes.castbardecimals == "1" then
-      rounded = floor(remaining * 10)
-      if castbar.lastTextTick ~= rounded then
-        castbar.lastTextTick = rounded
-        castbar.text:SetText(rounded / 10)
-      end
-    else
-      rounded = floor(remaining * 100)
-      if castbar.lastTextTick ~= rounded then
-        castbar.lastTextTick = rounded
-        castbar.text:SetText(string.format("%.2f", remaining))
-      end
+    local precision=math.max(0,math.min(3,tonumber(C.unitframes.castbardecimals) or 2))
+    local rounded=floor(remaining * 10^precision)
+    if castbar.lastTextTick ~= rounded or castbar.lastTextPrecision ~= precision then
+      castbar.lastTextTick,castbar.lastTextPrecision=rounded,precision
+      castbar.text:SetText(string.format("%."..precision.."f",rounded/10^precision))
     end
   end
 

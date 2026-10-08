@@ -12,7 +12,38 @@ included.
 3. Open the settings window with `/znp` or `/znameplates`.
 4. Toggle the movable, collapsible combat-nameplate list with `/znp list`.
 
-The General settings page can show a 1-30 plate dummy cluster for live
+Settings use an opaque, screen-fitting panel with sidebar categories, grouped
+scrollable rows, and cross-category search. All original controls and saved
+paths are preserved. Sliders have bounded exact-number entry; textures display
+friendly names rather than file paths. Dependent controls dim when inactive,
+and descriptions/tooltips explain precedence, limits and optional APIs.
+Changes apply live. Undo reverses the last change; category and full resets
+require confirmation. Crowds exposes the clustering threshold (30 default),
+health bands, and count-badge size/colour/opacity. List exposes visibility,
+collapsed state, scale, opacity, and independent width (0 = automatic).
+Preview collects the existing dummy controls; Advanced includes `/znpdump`.
+Raid-marker positioning and cast-time precision (0–3 decimals) now honour their
+selectors instead of using hard-coded placement or only 1/2 decimal modes.
+
+Regular settings rows are compact (32 px; sliders 38 px), with explanatory
+text in tooltips rather than permanent spacer lines. The Profiles category
+keeps the existing per-character `zNameplatesDB` storage unchanged. Its account
+index, `zNameplatesProfiles`, stores a separate new-character baseline and
+character copies for discovery. The first established character seeds that
+baseline automatically; existing characters never inherit over their saves.
+Log in to each character once to make it available as a copy source. Copies
+and restores require confirmation and retain the previous configuration in
+`profileRestorePoints`. `profileMigrationSnapshot` retains each character's
+pre-profile settings, and learned flight-path data stays character-local.
+"Use my settings as the default" affects only future/new characters and reset
+defaults; it does not modify existing characters. Before this migration, the
+current saved-variable files were copied to the ignored `SavedVariablesBackups`
+directory without changing their originals.
+The settings panel is fully opaque and renders above world nameplates, chat,
+and cluster badges. Colour pickers and confirmation dialogs opened from it
+render above the panel and restore their original UI strata when closed.
+
+The Preview settings page can show a 1-30 plate dummy cluster for live
 appearance and overlap testing. With zAPI available, its shared origin is
 locked into world space, each plate receives a stable 1-5 yard X/Y offset, and
 the formation responds to camera position, rotation, pitch, and zoom. When
@@ -54,8 +85,8 @@ that frame, and the player's world position is read once rather than per plate.
 Pool recovery scans run twice a second; normal lifecycle events remain immediate.
 The anti-flash guard checks opacity without rewriting already-invisible regions.
 
-Above 30 visible plates, crowd clustering combines attackable NPCs with the
-same name, level, tag ownership, and health band. Distance settings include a
+Above the configured threshold (30 visible plates by default), crowd clustering combines attackable NPCs with the
+same name, level, tag ownership, and health band. Crowds settings include a
 toggle and a 10–20% health-band slider (20% default). A cluster displays, for
 example, `Lasher x7` with its mean remaining-health percentage. The count is a
 larger bright-gold badge with a thick black outline and shadow; it does not
@@ -68,7 +99,7 @@ critters, and totems remain individual. Representative-only auras and casts
 are hidden because they would misrepresent the whole group. Hidden members
 skip normal rendering/data and depth ordering work, but their native unit
 frames remain available for exact clicks and damage-number anchoring.
-Individual plates return when the visible count drops to 30 or fewer.
+Individual plates return when the visible count drops to the configured threshold or fewer.
 
 The Text page provides live hostile, friendly, and combat font-style previews.
 Combat styling is optional and is applied only while a plate is confirmed to
