@@ -89,6 +89,8 @@ local pages = {
       { "check", "Class-color friendly names", {"nameplates","friendclassnamec"} },
       { "check", "Show combo points", {"nameplates","cpdisplay"} },
       { "check", "Click-through nameplates", {"nameplates","clickthrough"} },
+      { "check", "Click through friendly nameplates", {"nameplates","clickthrough_friendly"} },
+      { "check", "Set mouseover unit when hovering plates", {"nameplates","mouseover_unit"} },
       { "check", "Allow enemy nameplate overlap", {"nameplates","overlap_enemy"} },
       { "check", "Allow friendly nameplate overlap", {"nameplates","overlap_friendly"} },
       { "check", "Overlap all plates in friendly areas", {"nameplates","overlap_friendly_area"} },
@@ -311,7 +313,7 @@ local descriptions = {
 }
 local sectionRules = {
   General={{"Visibility","showhostile showfriendly hide_blizzard_xp disable_hostile_in_friendly disable_friendly_in_friendly"},
-    {"Interaction","clickthrough rightclick clickthreshold"},{"Stacking","overlap_enemy overlap_friendly overlap_friendly_area overlap_combat"}},
+    {"Interaction","clickthrough clickthrough_friendly mouseover_unit rightclick clickthreshold"},{"Stacking","overlap_enemy overlap_friendly overlap_friendly_area overlap_combat"}},
   Health={{"Layout","width vertical_offset offset heighthealth healthtexture verticalhealth"},
     {"Health labels","showhp hptextpos hptextformat"},{"Visibility rules","enemynpc enemyplayer neutralnpc friendlynpc friendlyplayer critters totems fullhealth target"},
     {"Target emphasis","targetglow glowcolor targetzoom targetzoomval targethighlight highlightcolor"}},
@@ -335,6 +337,8 @@ local sectionRules = {
 }
 local help = {
   clickthrough="Ignore normal plate clicks. Clusters remain clickable; interface windows always take priority.",
+  clickthrough_friendly="Ignore friendly plate clicks and hover events. Turn off the general Click-through nameplates option to keep hostile plates clickable. Neutral NPCs are unaffected.",
+  mouseover_unit="Requires SetMouseoverUnit (SuperWoW / Nampower). Normal plates need click-through off to receive hover events. Targets are never changed.",
   namefightcolor="Hostile enemies only. Friendly names keep their class/reaction colour; neutral names stay yellow.",
   overlap_combat="Combat plates take priority over friendly-area overlap rules.",
   neutralnpc="Unprovoked neutrals follow friendly visibility; provoked neutrals retain their health bar.",

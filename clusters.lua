@@ -65,8 +65,7 @@ function Z.RenderPlateCluster(plate)
   if plate.debuffs then for _, aura in pairs(plate.debuffs) do aura:Hide() end end
 end
 
-function Z.ClickPlate(plate, button)
-  if Z.IsPlateClickBlocked and Z.IsPlateClickBlocked() then return end
+function Z.GetPlateClickMember(plate)
   local group = plate.clusterGroup
   if group then
     local lowest, lowestHP
@@ -74,11 +73,97 @@ function Z.ClickPlate(plate, button)
       local percent, hp = Health(member)
       if percent and (not lowestHP or hp < lowestHP) then lowest, lowestHP = member, hp end
     end
-    -- Never fall back to an unrelated recycled native frame.
-    if lowest then lowest.parent:Click(button or "LeftButton") end
-  else
-    plate.parent:Click(button or "LeftButton")
+    return lowest
   end
+  return plate
+end
+
+function Z.ClickPlate(plate, button)
+  if Z.IsPlateClickBlocked and Z.IsPlateClickBlocked() then return end
+  -- Hover and clicks share the same live lowest-health member calculation.
+  local member = Z.GetPlateClickMember(plate)
+  if member then member.parent:Click(button or "LeftButton") end
+end
+
+local mouseoverPlate, mouseoverReceiver, mouseoverIdentifier
+local function HoverEnabled()
+  return type(SetMouseoverUnit)=="function" and Z.config
+    and Z.config.nameplates.mouseover_unit=="1"
+end
+
+function Z.ClearPlateMouseover(plate, receiver)
+  if mouseoverPlate~=plate or (receiver and receiver~=mouseoverReceiver) then return end
+  mouseoverPlate, mouseoverReceiver, mouseoverIdentifier=nil,nil,nil
+  -- Empty string, not nil: avoid a stale internal UnitIsPlayer(mouseover).
+  if type(SetMouseoverUnit)=="function" then pcall(SetMouseoverUnit, "") end
+end
+
+local function SetPlateMouseover(plate, receiver, force)
+  if not HoverEnabled() or plate.clusterHidden or
+      (Z.IsPlateClickBlocked and Z.IsPlateClickBlocked()) then
+    Z.ClearPlateMouseover(plate)
+    return
+  end
+  local member=Z.GetPlateClickMember(plate)
+  local identifier, token
+  if member then
+    local guid=member.cachedGuid
+    local unit=member.unit
+    local tokenValid=unit and UnitExists(unit) and (not guid or UnitGUID(unit)==guid)
+    if tokenValid then token=unit end
+    if guid and guid~="" then
+      local ok,exists=pcall(UnitExists,guid)
+      if tokenValid or (ok and exists) then identifier=guid end
+    end
+    identifier=identifier or token
+  end
+  if not identifier then
+    if mouseoverPlate then Z.ClearPlateMouseover(mouseoverPlate) end
+    return
+  end
+  if not force and mouseoverPlate==plate and mouseoverIdentifier==identifier then return end
+  local ok,result=pcall(SetMouseoverUnit,identifier)
+  if (not ok or result==false) and token and token~=identifier then
+    identifier=token; ok,result=pcall(SetMouseoverUnit,identifier)
+  end
+  if ok and result~=false then
+    mouseoverPlate,mouseoverReceiver,mouseoverIdentifier=plate,receiver,identifier
+  elseif mouseoverPlate then
+    Z.ClearPlateMouseover(mouseoverPlate)
+  end
+end
+
+function Z.RefreshOwnedPlateMouseover(plate, force)
+  if mouseoverPlate==plate then SetPlateMouseover(plate,mouseoverReceiver,force) end
+end
+
+function Z.InstallPlateMouseover(frame, plate)
+  -- OnConfigChange runs repeatedly. Install once, with the live pooled plate
+  -- reference in the frame's hook state; never grow a wrapper chain on refresh.
+  local hooks=frame.znpMouseoverHooks
+  if not hooks then
+    hooks={}; frame.znpMouseoverHooks=hooks
+    local previousEnter=frame:GetScript("OnEnter")
+    local previousLeave=frame:GetScript("OnLeave")
+    local previousHide=frame:GetScript("OnHide")
+    frame:SetScript("OnEnter",function()
+      if previousEnter then previousEnter(frame) end
+      SetPlateMouseover(hooks.plate,frame,true)
+    end)
+    frame:SetScript("OnLeave",function()
+      if previousLeave then previousLeave(frame) end
+      -- An Enter on the other receiver may already have transferred ownership.
+      Z.ClearPlateMouseover(hooks.plate,frame)
+    end)
+    frame:SetScript("OnHide",function()
+      if previousHide then previousHide(frame) end
+      -- Hiding the native parent removes both receivers. Hiding only the
+      -- overlay must not clear a hover already transferred to the parent.
+      Z.ClearPlateMouseover(hooks.plate, frame~=hooks.plate.parent and frame or nil)
+    end)
+  end
+  hooks.plate=plate
+  if not HoverEnabled() then Z.ClearPlateMouseover(plate) end
 end
 
 function Z.UpdatePlateClusters(now, visible, count, dirty)
@@ -86,6 +171,7 @@ function Z.UpdatePlateClusters(now, visible, count, dirty)
   local threshold = math.max(10, math.min(100, tonumber(C.cluster_threshold) or 30))
   local active = C.cluster_enabled == "1" and count > threshold
   if not dirty and active == previousActive and nextUpdate and now < nextUpdate then return false end
+  local hoveredCluster = mouseoverPlate and mouseoverPlate.clusterGroup
   previousActive, nextUpdate = active, now + .1
   for _, group in pairs(groups) do
     group.count, group.total = 0, 0
@@ -170,6 +256,11 @@ function Z.UpdatePlateClusters(now, visible, count, dirty)
   end
   -- Remove unused bands; the pool remains bounded by current visible units.
   for key, group in pairs(groups) do if group.count == 0 then groups[key] = nil end end
+  -- Reconcile only on the existing cluster-membership refresh, not a new
+  -- per-frame hover poll. Membership/HP changes can change the click member.
+  if mouseoverPlate and (hoveredCluster or mouseoverPlate.clusterGroup) then
+    Z.RefreshOwnedPlateMouseover(mouseoverPlate)
+  end
   return changed
 end
 

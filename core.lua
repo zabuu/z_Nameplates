@@ -89,6 +89,8 @@ local defaults = {
     showcastbar = "1", targetcastbar = "0", spellname = "0",
     showdebuffs = "1", showdebuffs_hostile = "1", showdebuffs_friendly = "0",
     owndebuffs = "0", clickthrough = "1", rightclick = "1", clickthreshold = "0.5",
+    mouseover_unit = "1",
+    clickthrough_friendly = "0",
     enemyclassc = "1", friendclassc = "1", friendclassnamec = "1",
     raidiconsize = "16", raidiconpos = "CENTER", raidiconoffx = "0", raidiconoffy = "-5",
     levelreference = "AUTO", levelposition = "LEFT", levelx = "0", levely = "0",

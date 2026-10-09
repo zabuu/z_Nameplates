@@ -1245,6 +1245,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         local guid = UnitGUID(arg1)
         plate.nameplate.cachedGuid = guid
         plate.nameplate.unit = arg1
+        zNameplates.RefreshOwnedPlateMouseover(plate.nameplate, true)
         plate.nameplate.positionTransition = nil
         plate.nameplate.distanceScaleIdentity = nil
         plate.nameplate.distanceScale = nil
@@ -1300,6 +1301,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         if plateByGuid[guid] then plateByGuid[guid] = nil end
       end
       if plate and plate.nameplate then
+        zNameplates.ClearPlateMouseover(plate.nameplate)
         zNameplates.ResetPlateCluster(plate.nameplate)
         SetLineOfSightDesaturation(plate.nameplate, nil)
         if plate.nameplate.questIcon then plate.nameplate.questIcon:Hide() end
@@ -2381,6 +2383,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     local collisionReleased = overlapEnabled or edgeReleased or nameplate.clusterGroup ~= nil
     local useOverlap = collisionReleased or C.nameplates["vertical_offset"] ~= "0"
     local clickable = nameplate.clusterGroup ~= nil or C.nameplates["clickthrough"] ~= "1"
+    if nameplate.isFriendly and C.nameplates.clickthrough_friendly == "1" then clickable = false end
 
     if not clickable then
       frame:EnableMouse(false)
@@ -2410,7 +2413,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     end
 
     local mouseEnabled = nameplate:IsMouseEnabled()
-    if C.nameplates["clickthrough"] == "0" and collisionReleased and SpellIsTargeting() == mouseEnabled then
+    if clickable and C.nameplates["clickthrough"] == "0" and collisionReleased and SpellIsTargeting() == mouseEnabled then
       if not nameplate.clusterGroup then nameplate:EnableMouse(not mouseEnabled) end
     end
 
@@ -2732,6 +2735,8 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
 
     local parent = self
     local nameplate = self.nameplate
+    zNameplates.InstallPlateMouseover(parent, nameplate)
+    zNameplates.InstallPlateMouseover(nameplate, nameplate)
     local overlapEnabled = cfg.overlap_enemy
     if nameplate.isFriendly or nameplate.isNeutral then overlapEnabled = cfg.overlap_friendly end
     nameplate.overlapEnabled = overlapEnabled

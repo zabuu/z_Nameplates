@@ -12,6 +12,16 @@ included.
 3. Open the settings window with `/znp` or `/znameplates`.
 4. Toggle the movable, collapsible combat-nameplate list with `/znp list`.
 
+General includes a default-on mouseover-unit option for SuperWoW or Nampower
+clients that provide `SetMouseoverUnit`. Hovering a clickable plate sets its
+unit without changing your target; leaving or removing the plate clears it.
+Cluster hover uses the same live lowest-health member as clicking. Without
+that API, existing mouse behaviour is unchanged.
+To click through friendly plates while retaining hostile clicks, turn off
+`Click-through nameplates` and enable `Click through friendly nameplates`.
+Click-through plates do not receive hover events; neutral NPCs are unaffected
+by the friendly-only option.
+
 Settings use an opaque, screen-fitting panel with sidebar categories, grouped
 scrollable rows, and cross-category search. All original controls and saved
 paths are preserved. Sliders have bounded exact-number entry; textures display
