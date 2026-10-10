@@ -10,15 +10,19 @@ lua = LuaRuntime(unpack_returned_tuples=True)
 lua.execute('''
 C={nameplates={clickthrough="0",clickthrough_friendly="1",vertical_offset="0"}}
 floor=math.floor
+abs=math.abs
 ShouldOverlap=function() return overlap end
 ReleaseAtScreenEdge=function() return false end
 SpellIsTargeting=function() return targeting end
 function widget()
- local w={mouse=false,width=1,dwidth=1}
+ local w={mouse=false,width=80,height=20,dwidth=1}
  function w:EnableMouse(v) self.mouse=v end
  function w:IsMouseEnabled() return self.mouse end
  function w:GetWidth() return self.width end
- function w:SetSize(a,b) self.width=a end
+ function w:GetHeight() return self.height end
+ function w:GetSize() return self.width,self.height end
+ function w:GetScale() return 1 end
+ function w:SetSize(a,b) self.width=a; self.height=b end
  return w
 end
 frame=widget(); nameplate=widget()
@@ -39,5 +43,8 @@ overlap=false; targeting=false; nameplate.isNeutral=true; update(); assert(frame
 C.nameplates.clickthrough="1"; update(); assert(not frame.mouse and not nameplate.mouse)
 C.nameplates.clickthrough_friendly="0"; C.nameplates.clickthrough="0"
 nameplate.isFriendly=true; update(); assert(frame.mouse)
+C.nameplates.collision_buffer_x="5"; C.nameplates.collision_buffer_y="7"
+update(); assert(frame.width==90 and frame.height==34)
+assert(nameplate.width==80 and nameplate.height==20)
 ''')
 print("Friendly click-through checks passed")

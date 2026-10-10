@@ -81,6 +81,8 @@ local defaults = {
     nameplate_range = "41",
     distance_scale = "1", distance_min_scale = "58",
     smooth_transitions = "1", transition_duration = ".12",
+    sticky_placement = "1", sticky_delay = ".15", sticky_return = "1",
+    collision_buffer_x = "0", collision_buffer_y = "0",
     cluster_enabled = "1", cluster_health_band = "20", cluster_threshold = "30",
     cluster_count_scale = "1.6", cluster_count_color = "1,.92,.15,1",
     distance_alpha = "1", distance_min_alpha = "37", los_fade = "1",
@@ -508,6 +510,10 @@ function Z.UpdatePlateTransition(plate, now)
   state.x, state.y, state.px, state.py, state.last = x, y, px, py, now
   local ox = state.offsetX * uiScale / plateScale
   local oy = state.offsetY * uiScale / plateScale + (tonumber(C.vertical_offset) or 0)
+  if Z.ApplyStickyPlacement then
+    local stickyX, stickyY = Z.ApplyStickyPlacement(plate,now,x,y,uiScale,plateScale)
+    if stickyX then ox,oy=stickyX,stickyY+(tonumber(C.vertical_offset) or 0) end
+  end
   if not state.appliedX or math.abs(ox - state.appliedX) > .001
       or math.abs(oy - state.appliedY) > .001 then
     plate:ClearAllPoints()

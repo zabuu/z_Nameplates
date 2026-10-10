@@ -1247,6 +1247,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         plate.nameplate.unit = arg1
         zNameplates.RefreshOwnedPlateMouseover(plate.nameplate, true)
         plate.nameplate.positionTransition = nil
+        plate.nameplate.stickyPlacement = nil
         plate.nameplate.distanceScaleIdentity = nil
         plate.nameplate.distanceScale = nil
         plate.nameplate.distanceVisualTime = nil
@@ -1309,6 +1310,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         plate.nameplate.cachedGuid = nil
         plate.nameplate.unit = nil
         plate.nameplate.positionTransition = nil
+        plate.nameplate.stickyPlacement = nil
         plate.nameplate.depth = nil
         plate.nameplate.cachedStrata = nil
         plate.nameplate.cachedBaseLevel = nil
@@ -1419,6 +1421,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
       -- Keep distance scaling/alpha on the actual render cadence. The more
       -- expensive plate data and depth bookkeeping remain capped below.
       frameState.now = now
+      zNameplates.UpdateStickyPlacements(now, visiblePlates, ShouldOverlap, frameState.targetGuid, frameState.mouseoverGuid)
       for plate in pairs(visiblePlates) do
         if plate:IsVisible() then nameplates.OnUpdate(plate, frameState, true) end
       end
@@ -1464,6 +1467,8 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
       this.depthDirty = nil
       UpdateNameplateDepthLayers()
     end
+
+    zNameplates.UpdateStickyPlacements(now, visiblePlates, ShouldOverlap, frameState.targetGuid, frameState.mouseoverGuid)
 
     for plate in pairs(visiblePlates) do
       if plate:IsVisible() then
@@ -2381,7 +2386,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     local overlapEnabled = ShouldOverlap(nameplate)
     local edgeReleased = ReleaseAtScreenEdge(frame, nameplate, overlapEnabled)
     local collisionReleased = overlapEnabled or edgeReleased or nameplate.clusterGroup ~= nil
-    local useOverlap = collisionReleased or C.nameplates["vertical_offset"] ~= "0"
+    local useOverlap = collisionReleased or nameplate.stickyPlacement ~= nil or C.nameplates["vertical_offset"] ~= "0"
     local clickable = nameplate.clusterGroup ~= nil or C.nameplates["clickthrough"] ~= "1"
     if nameplate.isFriendly and C.nameplates.clickthrough_friendly == "1" then clickable = false end
 
@@ -2401,14 +2406,13 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         frame:SetSize(1, 1)
       end
     else
-      if not nameplate.dwidth then
-        nameplate.dwidth = floor(nameplate:GetWidth() * nameplate:GetScale())
-      end
-
-      if floor(frame:GetWidth()) ~= nameplate.dwidth then
-        local nameW, nameH = nameplate:GetSize()
-        local plateScale = nameplate:GetScale()
-        frame:SetSize(nameW * plateScale, nameH * plateScale)
+      local nameW, nameH = nameplate:GetSize()
+      local plateScale = nameplate:GetScale()
+      local bufferX = math.max(0, math.min(40, tonumber(C.nameplates.collision_buffer_x) or 0))
+      local bufferY = math.max(0, math.min(40, tonumber(C.nameplates.collision_buffer_y) or 0))
+      local width, height = (nameW + bufferX*2)*plateScale, (nameH + bufferY*2)*plateScale
+      if abs(frame:GetWidth()-width) > .1 or abs(frame:GetHeight()-height) > .1 then
+        frame:SetSize(width, height)
       end
     end
 

@@ -11,6 +11,7 @@ core.lua
 options.lua
 layers.lua
 clusters.lua
+sticky.lua
 nameplates.lua
 dummy.lua
 chat.lua

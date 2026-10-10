@@ -22,6 +22,17 @@ To click through friendly plates while retaining hostile clicks, turn off
 Click-through plates do not receive hover events; neutral NPCs are unaffected
 by the friendly-only option.
 
+Distance includes optional `Sticky non-overlapping placement` (default on).
+With zAPI, established plates retain their preferred positions while camera
+movement follows immediately. Meaningful collisions must persist for 0.15 sec
+before a short slide, and native positions must stay clear/stable for 1 sec
+before gaps close. Both delays are adjustable. Disable it to restore native
+placement with the existing transition smoothing. Missing projection data,
+teleports and scenes above 100 non-overlapping plates safely fall back.
+General / Stacking provides independent horizontal and vertical plate buffers
+(0–40 px per side, default 0). Buffers scale with the plate and affect both
+native collision frames and sticky placement, not visible bar/text dimensions.
+
 Settings use an opaque, screen-fitting panel with sidebar categories, grouped
 scrollable rows, and cross-category search. All original controls and saved
 paths are preserved. Sliders have bounded exact-number entry; textures display
