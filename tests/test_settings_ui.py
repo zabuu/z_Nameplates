@@ -8,7 +8,10 @@ root = Path(__file__).resolve().parents[1]
 source = (root / "options.lua").read_text(encoding="utf-8-sig")
 baseline = subprocess.check_output(["git", "show", "HEAD:options.lua"], cwd=root, text=True)
 paths = lambda text: {tuple(re.findall(r'"([^"]+)"', p)) for p in re.findall(r'\{\s*"(?:check|slider|select|input|color)"\s*,[^\n]*?,\s*(\{[^}]+\})', text)}
-assert paths(baseline) <= paths(source), "An existing setting path was removed"
+# These saved values remain intact, but their old controls were deliberately
+# superseded by range clusters and bounded local placement at the user's request.
+obsolete={('nameplates','cluster_health_band'),('nameplates','sticky_return'),('nameplates','sticky_stack_rows')}
+assert paths(baseline)-obsolete <= paths(source), "An unrelated setting path was removed"
 lua = LuaRuntime(unpack_returned_tuples=True)
 lua.execute('''
 frames={}; widgets={}; callbacks={}; time=0
@@ -42,6 +45,7 @@ function methods:GetVerticalScroll() return self.scroll or 0 end
 function methods:SetScrollChild(v) self.scrollChild=v end
 function methods:SetAlpha(v) self.alpha=v end
 function methods:SetScale(v) self.scale=v end
+function methods:GetEffectiveScale() return self.scale or 1 end
 function methods:Enable() self.enabled=true end
 function methods:Disable() self.enabled=false end
 function methods:Show() local old=self.shown; self.shown=true; if not old then invoke(self,"OnShow") end end
@@ -49,12 +53,14 @@ function methods:Hide() local old=self.shown; self.shown=false; if old then invo
 function methods:SetShown(v) if v then self:Show() else self:Hide() end end
 function methods:IsShown() return self.shown end
 function methods:IsVisible() return self.shown and (not self.owner or self.owner:IsVisible()) end
-function methods:GetFrameLevel() return 4 end
+function methods:GetFrameLevel() return self.frameLevel or 4 end
+function methods:SetFrameLevel(v) self.frameLevel=v end
 function methods:GetFrameStrata() return self.strata or "DIALOG" end
 function methods:SetFrameStrata(v) self.strata=v end
 function methods:SetBackdropColor(r,g,b,a) self.backdropColor={r,g,b,a} end
 function methods:ClearFocus() invoke(self,"OnEditFocusLost") end
 function methods:SetFont(f,s,o) self.font=f; self.fontSize=s end
+function methods:SetTextColor(...) self.textColor={...} end
 function methods:GetFontString() if not self.caption then self.caption=CreateFrame("FontString",nil,self) end; return self.caption end
 function methods:GetHighlightTexture() return nil end
 function methods:CreateFontString() return CreateFrame("FontString",nil,self) end
@@ -164,4 +170,45 @@ invoke(findButton("   Edit colour"),"OnClick")
 assert(ColorPickerFrame:GetFrameStrata()=="FULLSCREEN_DIALOG")
 ColorPickerFrame:Hide(); assert(ColorPickerFrame:GetFrameStrata()=="DIALOG")
 ''')
-print(f"Settings UI executed successfully; all {len(paths(baseline))} original setting paths preserved.")
+lua.execute((root / "clusters.lua").read_text(encoding="utf-8-sig"))
+# Use the real backdrop helper: a no-op mock would miss a covering background.
+lua.execute('GetCVar=function(key) return key=="gxResolution" and "1024x768" or "0" end')
+lua.execute('local Z=zNameplates\n' + core[core.index("local function PerfectPixel()"):core.index("-- Render plate labels from a larger glyph surface")])
+lua.execute('''
+Z.config.nameplates.cluster_debuff_whitelist="Polymorph#Fear"
+for _,f in ipairs(frames) do if f.kind=="Button" and f:GetText()=="Preview" then invoke(f,"OnClick"); break end end
+Z.options:Refresh()
+local found=false
+for _,f in ipairs(frames) do
+ if f.samples then
+  found=true
+  assert(#f.samples==3 and f.samples[1].health:GetValue()==25)
+  assert(f.samples[1].health.text:GetText()=="25–85%")
+  assert(f.samples[2].clusterGroup.debuff=="Polymorph")
+  assert(f.samples[3].clusterGroup.debuff=="Fear")
+  for _,plate in ipairs(f.samples) do
+   local bar=plate.health
+   assert(bar:GetFrameStrata()==plate:GetFrameStrata())
+   assert(bar.backdrop:GetFrameLevel()==bar:GetFrameLevel()-1)
+   assert(bar.text.textColor[1]==1 and bar.text.textColor[4]==1)
+   -- Reproduce a backdrop promoted by parent re-layering on a later refresh.
+   bar.backdrop:SetFrameLevel(bar:GetFrameLevel()+2)
+   bar.backdrop:SetFrameStrata("TOOLTIP")
+  end
+  Z.RefreshClusterPreview(f)
+  for _,plate in ipairs(f.samples) do
+   assert(plate.health.backdrop:GetFrameLevel()==plate.health:GetFrameLevel()-1)
+   assert(plate.health.backdrop:GetFrameStrata()==plate.health:GetFrameStrata())
+  end
+ end
+end
+assert(found,"Cluster preview wasn't constructed in the settings UI")
+-- Inputs own a single background; no anonymous template art can escape rows.
+for _,f in ipairs(frames) do
+ if f.kind=="EditBox" then
+  assert(f.template==nil)
+  assert(f.backdropColor and f.backdropColor[4]==1)
+ end
+end
+''')
+print("Settings UI and live cluster preview passed; unrelated setting paths preserved.")

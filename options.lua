@@ -100,6 +100,9 @@ local pages = {
       { "check", "Replace totems with icons", {"nameplates","totemicons"} },
       { "check", "Show guild/sub-name", {"nameplates","showguildname"} },
       { "check", "Show dummy nameplate cluster", {"nameplates","dummy_preview"} },
+      { "check", "Dummy cluster in combat with me", {"nameplates","dummy_in_combat"} },
+      { "check", "Show dummy preview at full opacity", {"nameplates","dummy_full_opacity"} },
+      { "check", "Keep dummy preview above settings", {"nameplates","dummy_foreground"} },
       { "slider", "Dummy nameplates", {"nameplates","dummy_count"}, 1, 30, 1, " plates" },
       { "button", "Dummy Damage!", nil, function()
           if Z.PulseDummyDamage then Z.PulseDummyDamage() end
@@ -263,12 +266,18 @@ local pages = {
     name = "Distance",
     items = {
       { "check", "Cluster similar enemies above 30 plates", {"nameplates","cluster_enabled"} },
-      { "slider", "Cluster health-band width", {"nameplates","cluster_health_band"}, 10, 20, 1, "%" },
+      { "slider", "Cluster health-range opacity", {"nameplates","cluster_range_opacity"}, .1, .9, .05, "", 2 },
+      { "input", "Debuff subgroup list", {"nameplates","cluster_debuff_whitelist"}, 260 },
       { "check", "Smooth nameplate transitions", {"nameplates","smooth_transitions"} },
       { "slider", "Transition duration", {"nameplates","transition_duration"}, .05, .5, .01, " sec", 2 },
       { "check", "Sticky non-overlapping placement", {"nameplates","sticky_placement"} },
       { "slider", "Collision patience", {"nameplates","sticky_delay"}, .05, .5, .01, " sec", 2 },
-      { "slider", "Wait before closing gaps", {"nameplates","sticky_return"}, .3, 3, .1, " sec", 1 },
+      { "slider", "Maximum distance from anchor", {"nameplates","sticky_max_displacement"}, 32, 180, 1, " px" },
+      { "slider", "Placement smoothing", {"nameplates","sticky_motion_duration"}, .1, .6, .01, " sec", 2 },
+      { "slider", "Maximum relocation speed", {"nameplates","sticky_motion_speed"}, 40, 400, 10, " px/sec" },
+      { "slider", "Sideways avoidance gap", {"nameplates","sticky_column_gap"}, 0, 40, 1, " px" },
+      { "check", "Protect hovered plates from rearrangement", {"nameplates","sticky_hover_protection"} },
+      { "check", "Show anchor link on displaced target / hover", {"nameplates","sticky_anchor_link"} },
       { "slider", "Extended nameplate range", {"nameplates","nameplate_range"}, 10, 80, 1, " yd" },
       { "check", "Scale nameplates by exact distance", {"nameplates","distance_scale"} },
       { "slider", "Minimum distant size", {"nameplates","distance_min_scale"}, 20, 100, .01, "%", 2 },
@@ -298,8 +307,8 @@ local destinations = {
   namefightcolor="Text", showguildname="Text", nametextpos="Text",
   width="Health", vertical_offset="Health", totemicons="Appearance",
   targetglow="Health", glowcolor="Health", targetzoom="Health", targetzoomval="Health",
-  dummy_preview="Preview", dummy_count="Preview", rightclick="General", clickthreshold="General",
-  cluster_enabled="Crowds", cluster_health_band="Crowds",
+  dummy_preview="Preview", dummy_count="Preview", dummy_in_combat="Preview", dummy_full_opacity="Preview", dummy_foreground="Preview", rightclick="General", clickthreshold="General",
+  cluster_enabled="Crowds", cluster_range_opacity="Crowds", cluster_debuff_whitelist="Crowds",
 }
 local descriptions = {
   General="Visibility, interaction and stacking behaviour.",
@@ -337,16 +346,23 @@ local sectionRules = {
   Chat={{"Enable & placement","enabled show_without_plate position x y"},
     {"Appearance & timing","duration fade scale fontsize width opacity background_color background_opacity fontstyle"},
     {"Channels","say yell party raid guild whisper battleground instance emote npc"}},
-  Distance={{"Movement & range","smooth_transitions transition_duration sticky_placement sticky_delay sticky_return nameplate_range"},
+  Distance={{"Movement & range","smooth_transitions transition_duration sticky_placement sticky_delay sticky_max_displacement sticky_motion_duration sticky_motion_speed sticky_column_gap sticky_hover_protection sticky_anchor_link nameplate_range"},
     {"Distance sizing","distance_scale distance_min_scale"},{"Distance & line of sight","distance_alpha distance_min_alpha los_fade los_desaturation"}},
 }
 local help = {
   clickthrough="Ignore normal plate clicks. Clusters remain clickable; interface windows always take priority.",
   clickthrough_friendly="Ignore friendly plate clicks and hover events. Turn off the general Click-through nameplates option to keep hostile plates clickable. Neutral NPCs are unaffected.",
   mouseover_unit="Requires SetMouseoverUnit (SuperWoW / Nampower). Normal plates need click-through off to receive hover events. Targets are never changed.",
-  sticky_placement="Requires zAPI. Keeps non-overlapping plates in stable positions, tolerates brief collisions and delays closing gaps. Camera movement stays immediate. Turn off to restore native placement. Falls back to native smoothing above 100 visible non-overlapping plates.",
+  sticky_placement="Requires zAPI. Compact local placement gently returns toward each mob's calibrated anchor. Avoids persistent collisions without permanent columns; camera movement stays immediate. Dense scenes may still need clustering.",
   sticky_delay="How long a meaningful collision must persist before a plate slides to a free position.",
-  sticky_return="How long the native position must stay clear and stable before a displaced plate returns to it.",
+  sticky_return="How long a lower free slot must remain stable before a plate settles downward within its assigned column.",
+  sticky_stack_rows="Limits column height in plate-sized rows. Overflow fills right, left, farther right, farther left. Existing plates retain their columns as neighbours disappear.",
+  sticky_column_gap="Extra spacing used when modest sideways movement resolves a local collision. No permanent columns are assigned.",
+  sticky_max_displacement="Limits vertical displacement; horizontal displacement is limited to 60% of this. Dense packs may still overlap: use Crowds clustering rather than moving plates far from their mobs.",
+  sticky_motion_duration="Non-bouncy damping for relocation. Larger values settle more gently; genuine mob and camera motion is not delayed.",
+  sticky_motion_speed="Caps collision-driven relocation speed, not world/camera movement.",
+  sticky_hover_protection="Pauses collision-driven relocation while hovered and for 0.2 seconds afterward. Other plates make room. World movement still follows the mob.",
+  sticky_anchor_link="A subtle dotted connection to the home anchor appears only on displaced selected or hovered plates.",
   collision_buffer_x="Extra collision-frame space on each side of a non-overlapping plate. Scales with the plate; does not change the visible healthbar or text.",
   collision_buffer_y="Extra collision-frame space above and below a non-overlapping plate. Scales with the plate; does not change the visible healthbar or text.",
   namefightcolor="Hostile enemies only. Friendly names keep their class/reaction colour; neutral names stay yellow.",
@@ -362,9 +378,13 @@ local help = {
   combatofftanks="Separate player names with #. These names identify your off-tanks.",
   fontstyle_combat="Used only when the combat-style override is enabled.",
   cluster_enabled="Targets, raid marks, players, friendly units and critters remain separate. Click a cluster for its lowest-HP member.",
-  cluster_health_band="Members move between health bands as their HP changes; displayed health is the average percentage.",
+  cluster_range_opacity="The bar is solid to the lowest member's health and translucent from there to the highest member's health.",
+  cluster_debuff_whitelist="Exact debuff names separated by #. Matching enemies form separate subgroups regardless of health. If several match, the first listed wins. Requires C_UnitAuras; target and raid-marked mobs remain separate.",
   shown="Keep a compact frame visible even with no nearby enemies. You can drag its header.",
   dummy_preview="Live test plates use your actual settings. Camera-aware placement requires zAPI.",
+  dummy_in_combat="Simulates combat with you for dummy font styles, name/threat colours, castbars and combat-overlap rules. Does not put the real player in combat or create real units.",
+  dummy_full_opacity="Removes inactive and distance fading from the in-world dummy preview. Colours and the cluster range segment's transparency remain as configured.",
+  dummy_foreground="While the Preview page is open, render the in-world dummy plates above the settings background, but below colour pickers and confirmation dialogs.",
   nameplates_mass="Background data rate in crowds. Position and distance animations remain per-frame.",
     nameplates="An inherited border size of -1 uses the default border setting.",
 }
@@ -383,6 +403,10 @@ byName.Crowds.items[1][2] = "Cluster similar enemies"
 table.insert(byName.Crowds.items,{"slider","Start above this visible-plate count",{"nameplates","cluster_threshold"},10,100,1," plates"})
 table.insert(byName.Crowds.items,{"slider","Count badge size multiplier",{"nameplates","cluster_count_scale"},1,3,.05,"x",2})
 table.insert(byName.Crowds.items,{"color","Count badge colour / opacity",{"nameplates","cluster_count_color"}})
+table.insert(byName.Preview.items,{"slider","Cluster sample: lowest health",{"nameplates","dummy_cluster_min"},0,100,1,"%"})
+table.insert(byName.Preview.items,{"slider","Cluster sample: highest health",{"nameplates","dummy_cluster_max"},0,100,1,"%"})
+table.insert(byName.Preview.items,{"slider","Cluster sample: member count",{"nameplates","dummy_cluster_members"},2,30,1," mobs"})
+table.insert(byName.Preview.items,{"clusterpreview","Cluster health-range / debuff samples",nil})
 byName.List.items = {
   {"check","Show nearby-enemy list",{"combatlist","shown"}},
   {"check","Collapse the list",{"combatlist","collapsed"}},
@@ -450,8 +474,10 @@ local function DependencyEnabled(widget)
     targetzoomval="targetzoom", glowcolor="targetglow", highlightcolor="targethighlight",
     hptextpos="showhp", hptextformat="showhp", targetcastbar="showcastbar", spellname="showcastbar", heightcast="showcastbar",
     fontsize_friendly=nil, distance_min_scale="distance_scale", transition_duration="smooth_transitions", los_desaturation="los_fade",
-    sticky_delay="sticky_placement", sticky_return="sticky_placement",
-    cluster_threshold="cluster_enabled", cluster_health_band="cluster_enabled", cluster_count_scale="cluster_enabled", cluster_count_color="cluster_enabled",
+    sticky_delay="sticky_placement", sticky_column_gap="sticky_placement",
+    sticky_max_displacement="sticky_placement", sticky_motion_duration="sticky_placement", sticky_motion_speed="sticky_placement",
+    sticky_hover_protection="sticky_placement", sticky_anchor_link="sticky_placement",
+    cluster_threshold="cluster_enabled", cluster_range_opacity="cluster_enabled", cluster_debuff_whitelist="cluster_enabled", cluster_count_scale="cluster_enabled", cluster_count_color="cluster_enabled",
     showdebuffs_hostile="showdebuffs", showdebuffs_friendly="showdebuffs", owndebuffs="showdebuffs", debuffsize="showdebuffs", debuffoffset="showdebuffs",
   }
   if path[1]=="nameplates" and dependencies[key] then return GetValue({"nameplates",dependencies[key]})=="1" end
@@ -515,7 +541,20 @@ local pageDescription=frame:CreateFontString(nil,"OVERLAY","GameFontHighlightSma
 pageDescription:SetPoint("TOPLEFT",pageTitle,"BOTTOMLEFT",0,-4)
 pageDescription:SetWidth(600); pageDescription:SetJustifyH("LEFT")
 pageDescription:SetTextColor(.65,.72,.8,1)
-local search=CreateFrame("EditBox",nil,frame,"InputBoxTemplate")
+-- Own the input background instead of inheriting legacy template regions.
+-- Anonymous InputBoxTemplate regions can leave stray artwork in the scroll view.
+local function CreateSettingsInput(parent)
+  local input=CreateFrame("EditBox",nil,parent)
+  input:SetFontObject(GameFontHighlightSmall)
+  input:SetTextInsets(7,7,0,0)
+  input:SetAutoFocus(false)
+  input:SetBackdrop({bgFile="Interface\\BUTTONS\\WHITE8X8",edgeFile="Interface\\BUTTONS\\WHITE8X8",edgeSize=1})
+  input:SetBackdropColor(.055,.07,.09,1)
+  input:SetBackdropBorderColor(.22,.28,.35,1)
+  input:SetTextColor(.9,.94,.98,1)
+  return input
+end
+local search=CreateSettingsInput(frame)
 search:SetPoint("TOPRIGHT",frame,"TOPRIGHT",-60,-16)
 search:SetWidth(225); search:SetHeight(24); search:SetAutoFocus(false)
 local searchHint=search:CreateFontString(nil,"OVERLAY","GameFontDisableSmall")
@@ -640,7 +679,7 @@ end
 local function CreateWidget(parent, item, index)
   -- One bounded label/control row inside the clipped scroll viewport.
   local rowFrame=CreateFrame("Frame",nil,parent)
-  rowFrame:SetWidth(620); rowFrame:SetHeight(item[1]=="preview" and 60 or item[1]=="slider" and 38 or 32)
+  rowFrame:SetWidth(620); rowFrame:SetHeight(item[1]=="clusterpreview" and 190 or item[1]=="preview" and 60 or item[1]=="slider" and 38 or 32)
   local separator=rowFrame:CreateTexture(nil,"BACKGROUND")
   separator:SetTexture("Interface\\BUTTONS\\WHITE8X8"); separator:SetVertexColor(.35,.4,.5,.13)
   separator:SetPoint("BOTTOMLEFT",rowFrame,"BOTTOMLEFT",8,0)
@@ -708,7 +747,7 @@ local function CreateWidget(parent, item, index)
     widget.text = text
     widget.suffix = suffix
     widget.decimals = decimals
-    local exact=CreateFrame("EditBox",nil,parent,"InputBoxTemplate")
+    local exact=CreateSettingsInput(parent)
     exact:SetPoint("TOPRIGHT",parent,"TOPLEFT",x+590,y+5)
     exact:SetWidth(70); exact:SetHeight(22); exact:SetAutoFocus(false)
     local function CommitNumber()
@@ -726,7 +765,7 @@ local function CreateWidget(parent, item, index)
     widget.valueControl=exact
   elseif kind == "input" then
     Label(parent, text, x, y)
-    local input = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
+    local input = CreateSettingsInput(parent)
     input:SetPoint("TOPRIGHT", parent, "TOPLEFT", x + 590, y + 5)
     input:SetWidth(265); input:SetHeight(24)
     input:SetAutoFocus(false)
@@ -786,6 +825,10 @@ local function CreateWidget(parent, item, index)
     widget.control = button
     widget.swatch = swatch
     SkinButton(button)
+  elseif kind == "clusterpreview" then
+    local preview=CreateFrame("Frame",nil,parent)
+    preview:SetPoint("TOPLEFT",parent,"TOPLEFT",x,y); preview:SetWidth(580); preview:SetHeight(176)
+    preview:EnableMouse(false); widget.control=preview
   elseif kind == "preview" then
     local preview = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     preview:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y - 3)
@@ -794,7 +837,7 @@ local function CreateWidget(parent, item, index)
     preview:SetText(text)
     widget.control = preview
   end
-  if kind~="preview" then
+  if kind~="preview" and kind~="clusterpreview" then
     widget.control:SetScript("OnEnter",function()
       GameTooltip:SetOwner(widget.control,"ANCHOR_RIGHT")
       GameTooltip:SetText(text)
@@ -811,6 +854,7 @@ end
 local function ShowTab(index)
   dropdown:Hide()
   activeTab = index
+  frame.activePage = pages[index].name
   if searchText~="" then search:SetText("") end
   for i = 1, table.getn(tabFrames) do
     local selected=i==index
@@ -959,7 +1003,7 @@ function frame:Refresh()
     if widget.control.Enable and widget.control.Disable then
       if enabled then widget.control:Enable() else widget.control:Disable() end
     end
-    if widget.control.EnableMouse and widget.kind~="preview" then widget.control:EnableMouse(enabled) end
+    if widget.control.EnableMouse and widget.kind~="preview" and widget.kind~="clusterpreview" then widget.control:EnableMouse(enabled) end
     if widget.valueControl then widget.valueControl:EnableMouse(enabled) end
     if widget.labelButton then widget.labelButton:EnableMouse(enabled) end
     if widget.path then
@@ -989,6 +1033,8 @@ function frame:Refresh()
         local r, g, b = Z.GetStringColor(value)
         widget.swatch:SetVertexColor(tonumber(r) or 1, tonumber(g) or 1, tonumber(b) or 1)
       end
+    elseif widget.kind=="clusterpreview" then
+      if Z.RefreshClusterPreview then Z.RefreshClusterPreview(widget.control) end
     elseif widget.kind == "preview" then
       local useUnit = Z.config.nameplates.use_unitfonts == "1"
       local font = useUnit and Z.font_unit or Z.font_default

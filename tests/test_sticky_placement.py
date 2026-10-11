@@ -1,14 +1,16 @@
-"""Sticky slots, collision patience, camera tracking, release and pool safety."""
+"""Bounded local placement, hover protection, damping, home return and identity."""
 from pathlib import Path
 from lupa.lua51 import LuaRuntime
 
 root=Path(__file__).resolve().parents[1]
 lua=LuaRuntime(unpack_returned_tuples=True)
 lua.execute('''
-Z={config={nameplates={sticky_placement="1",sticky_delay=".15",sticky_return="1"}}}
+Z={config={nameplates={sticky_placement="1",sticky_delay=".15",sticky_max_displacement="96",
+ sticky_motion_speed="140",sticky_motion_duration=".22",sticky_hover_protection="1"}}}
 zNameplates=Z; zAPI=function() end
 UIParent={GetEffectiveScale=function() return 1 end,
  GetWidth=function() return 1000 end,GetHeight=function() return 800 end}
+clock=0; GetTime=function() return clock end
 visible={}
 function add(id,x,y)
  local f={x=x,y=y}
@@ -23,50 +25,101 @@ function add(id,x,y)
  f.nameplate=p; visible[f]=f
  return p
 end
-Z.GetPlateProjection=function(p) return p.px/1000,p.py/800,p.depth end
+Z.GetPlateProjection=function(p) if p.px then return p.px/1000,p.py/800,p.depth end end
 overlap=false
-function update(t) Z.UpdateStickyPlacements(t,visible,function() return overlap end) end
+function update(t)
+ clock=t; Z.UpdateStickyPlacements(t,visible,function() return overlap end)
+end
+function render(p,t)
+ clock=t
+ return Z.ApplyStickyPlacement(p,t,p.parent.x,p.parent.y,1,1)
+end
+function near(a,b) assert(math.abs(a-b)<.001,tostring(a).." != "..tostring(b)) end
 a=add("a",100,100)
 ''')
 lua.execute((root / "sticky.lua").read_text(encoding="utf-8-sig"))
 lua.execute('''
 update(0); local order=a.stickyPlacement.order
 a.parent.y=130; update(.05)
-assert(a.stickyPlacement.baseY==100 and a.stickyPlacement.dy==0)
--- Native stack shuffle is cancelled, whereas matching camera motion is immediate.
-local x,y=Z.ApplyStickyPlacement(a,.05,100,130,1,1)
-assert(y==-30)
-a.px=120; a.py=120; a.parent.x=120; a.parent.y=150; update(.10)
-assert(a.stickyPlacement.baseX==120 and a.stickyPlacement.baseY==120)
--- Isolated native position must remain stable for the full release delay.
-for i=3,22 do update(i*.05) end
-assert(a.stickyPlacement.dy==30)
--- Recycled plate cannot inherit another unit's displacement or ordering.
-a.cachedGuid="new"; update(1.15)
-assert(a.stickyPlacement.order>order and a.stickyPlacement.dy==0)
--- Start a separate, initially clear scene. Existing plate wins ties.
-visible={}; a=add("first",100,100); b=add("second",100,130)
-update(2); b.py=110; b.parent.y=110
-update(2.05); assert(b.stickyPlacement.dy==0)
-update(2.10); assert(b.stickyPlacement.dy==0)
-update(2.25)
-assert(a.stickyPlacement.dy==0)
-assert(math.abs(b.stickyPlacement.baseY+b.stickyPlacement.dy-100)>=22)
--- Slot slide starts smoothly, not an instant full-row jump.
-Z.ApplyStickyPlacement(b,2.25,100,110,1,1)
-local before=b.stickyPlacement.displayY
-Z.ApplyStickyPlacement(b,2.26,100,110,1,1)
-assert(math.abs(b.stickyPlacement.displayY-before)>0)
-assert(math.abs(b.stickyPlacement.displayY)<math.abs(b.stickyPlacement.dy))
--- Camera/world jumps reset instead of leaving labels over unrelated units.
-b.px=500; b.parent.x=500; update(2.30)
-assert(b.stickyPlacement.dy==0 and b.stickyPlacement.baseX==500)
-overlap=true; update(2.35); assert(not a.stickyPlacement and not b.stickyPlacement)
-overlap=false; zAPI=nil; update(2.4); assert(not a.stickyPlacement)
+local x,y=render(a,.05); near(x,100); near(y,100)
+a.px=120; a.py=120; a.parent.x=180; a.parent.y=150; update(.1)
+x,y=render(a,.1); near(x,120); near(y,120)
+-- Missing data gets short grace, never a native-frame flyaway.
+local saved=a.stickyPlacement
+a.px=nil; update(.11); assert(a.stickyPlacement==saved)
+a.px=120; update(.12); assert(a.stickyPlacement==saved)
+a.px=nil; update(.30); assert(not a.stickyPlacement)
+a.px=120; update(.35)
+-- Pre-combat calibration is preserved once, including the home height.
+overlap=true; a.parent.x=180; a.parent.y=120; update(.4)
+assert(not a.stickyPlacement and a.stickyAnchorCalibration.x==60)
+a.parent.x=600; a.parent.y=300; overlap=false; update(.45)
+near(a.stickyPlacement.baseX,180); near(a.stickyPlacement.baseY,120)
+a.cachedGuid="replacement"; update(.5)
+near(a.stickyPlacement.baseX,120); assert(a.stickyPlacement.order>order)
+-- A hovered plate holds its displacement; the neighbour makes room.
+visible={}; a=add("hover",100,100); b=add("peer",100,100)
+Z.SetPlateLayoutHover(a,a.parent,true)
+update(1); render(a,1); render(b,1)
+update(1.1); assert(b.stickyPlacement.dy==0)
+for i=11,40 do
+ local t=1+i*.01; update(t); render(a,t); render(b,t)
+end
+assert(a.stickyPlacement.dx==0 and a.stickyPlacement.dy==0)
+assert(b.stickyPlacement.dy>0 or b.stickyPlacement.dx~=0)
+local s=b.stickyPlacement
+assert(math.abs(s.dx)<=57.6 and s.dy<=96 and s.dy>=0)
+-- Relocation speed is bounded per frame, not snapped to a new slot.
+local oldX,oldY=s.displayX,s.displayY
+render(b,1.41)
+assert(math.abs(s.displayX-oldX)<=1.401 and math.abs(s.displayY-oldY)<=1.401)
+Z.SetPlateLayoutHover(b,b.parent,true)
+update(1.42); oldX,oldY=s.displayX,s.displayY
+for i=43,60 do local t=1+i*.01; update(t); render(b,t) end
+near(s.displayX,oldX); near(s.displayY,oldY)
+-- Hover protection does not lag genuine world/camera movement.
+b.px=125; b.parent.x=125; update(1.61)
+x=render(b,1.61); near(x,125+oldX)
+Z.SetPlateLayoutHover(b,b.parent,false)
+update(1.7); assert(s.hovered)
+visible={[b.parent]=b.parent}
+for i=81,320 do local t=1+i*.01; update(t); render(b,t) end
+near(s.dx,0); near(s.dy,0)
+assert(math.abs(s.displayX)<.01 and math.abs(s.displayY)<.01)
+-- Hover transfer between overlay/native receivers does not lose protection.
+Z.SetPlateLayoutHover(b,b.parent,true); Z.SetPlateLayoutHover(b,b,true)
+Z.SetPlateLayoutHover(b,b.parent,false); assert(b.layoutHoverReceiver==b)
+Z.SetPlateLayoutHover(b,b,false,true); assert(not b.layoutHoverReceiver)
+-- Dense layouts remain bounded instead of building detached towers/columns.
+visible={}; pack={}
+for i=1,18 do pack[i]=add("pack"..i,200,100) end
+for i=0,80 do
+ local t=5+i*.01; update(t)
+ for _,p in ipairs(pack) do render(p,t) end
+end
+for _,p in ipairs(pack) do
+ local state=p.stickyPlacement
+ assert(not state.column and math.abs(state.dx)<=57.6 and state.dy<=96)
+ assert(state.displayY<=96.01 and math.abs(state.displayX)<=57.61)
+end
+-- Overlap, missing API, or toggling off restores native behaviour.
+overlap=true; update(6); for _,p in ipairs(pack) do assert(not p.stickyPlacement) end
+overlap=false; zAPI=nil; update(6.1); assert(not pack[1].stickyPlacement)
 zAPI=function() end; Z.config.nameplates.sticky_placement="0"
-update(2.45); assert(not b.stickyPlacement)
+update(6.2); assert(not pack[1].stickyPlacement)
+-- Preview scenes cannot overwrite the live array or share its solve cadence.
 Z.config.nameplates.sticky_placement="1"
-Z.config.nameplates.collision_buffer_x="5"; Z.config.nameplates.collision_buffer_y="7"
-update(2.5); assert(b.stickyPlacement.w==90 and b.stickyPlacement.h==34)
+visible={}; live=add("live",100,100); update(7)
+local original=live.stickyPlacement
+local isolated={}; preview=add("preview",400,300)
+local demoVisible={[preview.parent]=preview.parent}
+Z.UpdateStickyPlacements(7.01,demoVisible,function() return false end,nil,nil,isolated)
+assert(live.stickyPlacement==original and #isolated.entries==1)
+assert(isolated.entries[1].plate==preview and isolated.nextSolve>7.01)
+visible={[live.parent]=live.parent}; update(7.02)
+assert(live.stickyPlacement==original and live.stickyPlacement.baseX==100)
+local ok=pcall(Z.UpdateStickyPlacements,7.03,demoVisible,function() error("test") end,nil,nil,isolated)
+assert(not ok)
+update(7.1); assert(live.stickyPlacement.baseX==100) -- Restored even on error.
 ''')
-print("Sticky placement checks passed (Lua 5.1)")
+print("Bounded local placement, hover protection, damping and home-return checks passed")

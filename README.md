@@ -23,26 +23,55 @@ Click-through plates do not receive hover events; neutral NPCs are unaffected
 by the friendly-only option.
 
 Distance includes optional `Sticky non-overlapping placement` (default on).
-With zAPI, established plates retain their preferred positions while camera
-movement follows immediately. Meaningful collisions must persist for 0.15 sec
-before a short slide, and native positions must stay clear/stable for 1 sec
-before gaps close. Both delays are adjustable. Disable it to restore native
-placement with the existing transition smoothing. Missing projection data,
+With zAPI, a warm local layout favours compact placement near each mob's home
+anchor rather than permanent columns. It resolves persistent collisions with
+small upward or modest sideways adjustments and gently returns home as room
+opens. Relocation is damped and speed-limited; genuine camera/mob motion follows
+immediately. The displacement limit, smoothing, speed and hover protection are
+adjustable. Hover pauses layout relocation and holds briefly after departure;
+displaced selected/hovered plates can show a subtle dotted anchor connection.
+Overlap-allowed plates retain native placement. Their centre-to-projection
+bias is recorded before combat, then preserved during sticky stacking without
+adopting subsequent native collision shifts or applying the bias twice.
+Sticky visuals use screen-relative anchors calculated after distance scaling,
+so later native collision-frame movement cannot shove them for one frame.
+Brief missing projection samples retain the last good placement for at most
+0.12 sec; hidden or recycled units never inherit that grace period.
+Meaningful collisions must persist for 0.15 sec by default. Open space is
+reclaimed continuously through the same non-bouncy motion, not a delayed snap.
+Collision bounds use the visible name, level, guild, health/cast bars, raid
+marker and auras, not the old oversized placeholder. Dense scenes can still
+overlap at the displacement limit; clustering is preferable to detached towers.
+Disable it to restore native placement with the existing transition smoothing. Missing projection data,
 teleports and scenes above 100 non-overlapping plates safely fall back.
 General / Stacking provides independent horizontal and vertical plate buffers
 (0–40 px per side, default 0). Buffers scale with the plate and affect both
 native collision frames and sticky placement, not visible bar/text dimensions.
 
 Settings use an opaque, screen-fitting panel with sidebar categories, grouped
-scrollable rows, and cross-category search. All original controls and saved
-paths are preserved. Sliders have bounded exact-number entry; textures display
+scrollable rows, and cross-category search. Unrelated controls and saved
+paths are preserved; obsolete HP-band/column controls were superseded, but
+their saved values remain intact for rollback. Sliders have bounded exact-number entry; textures display
 friendly names rather than file paths. Dependent controls dim when inactive,
 and descriptions/tooltips explain precedence, limits and optional APIs.
 Changes apply live. Undo reverses the last change; category and full resets
 require confirmation. Crowds exposes the clustering threshold (30 default),
-health bands, and count-badge size/colour/opacity. List exposes visibility,
+health-range opacity, debuff subgroups, and count-badge size/colour/opacity. A
+cluster bar is solid from zero to its lowest HP member, then translucent up to
+its highest HP member. Exact debuff names separated by `#` split matching mobs
+into unique subgroups; the first matching list entry wins. Enemy type, level
+and tag-ownership boundaries remain separate. List exposes visibility,
 collapsed state, scale, opacity, and independent width (0 = automatic).
 Preview collects the existing dummy controls; Advanced includes `/znpdump`.
+Preview also includes adjustable cluster range/member-count samples using the
+real range renderer. Its first two debuff subgroups reflect the Crowds list.
+`Dummy cluster in combat with me` simulates combat fonts, name/threat colours,
+castbars and overlap rules without affecting real player combat. Camera-aware
+dummies use the same placement solver in an isolated scene. Full preview
+opacity and foreground display are enabled by default: while Preview is open,
+dummy plates render above the settings background but below modal dialogs.
+Turn either off to restore world-layer rendering or actual distance/inactive
+fading. These controls affect only the dummy preview, not real nameplates.
 Raid-marker positioning and cast-time precision (0–3 decimals) now honour their
 selectors instead of using hard-coded placement or only 1/2 decimal modes.
 

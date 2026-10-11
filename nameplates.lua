@@ -781,6 +781,10 @@ function zNameplates.StartNameplates()
       plate.dwidth = nil
     end
 
+    -- Use the final scale: scaling after a screen-relative anchor can magnify
+    -- its coordinates and cause a one-frame flyaway.
+    zNameplates.UpdatePlateTransition(plate, now)
+
     local targetDistanceAlpha = cfg.distance_alpha
       and 1 - (1 - cfg.distance_min_alpha) * progress or 1
     local distanceAlpha = plate.distanceAlpha or 1
@@ -1248,6 +1252,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         zNameplates.RefreshOwnedPlateMouseover(plate.nameplate, true)
         plate.nameplate.positionTransition = nil
         plate.nameplate.stickyPlacement = nil
+        plate.nameplate.stickyAnchorCalibration = nil
         plate.nameplate.distanceScaleIdentity = nil
         plate.nameplate.distanceScale = nil
         plate.nameplate.distanceVisualTime = nil
@@ -1311,6 +1316,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         plate.nameplate.unit = nil
         plate.nameplate.positionTransition = nil
         plate.nameplate.stickyPlacement = nil
+        plate.nameplate.stickyAnchorCalibration = nil
         plate.nameplate.depth = nil
         plate.nameplate.cachedStrata = nil
         plate.nameplate.cachedBaseLevel = nil
@@ -2315,7 +2321,6 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     -- Size, opacity, and line-of-sight transitions run at the fast central
     -- cadence so movement remains continuous even when normal plate data is
     -- using the lower non-target update rate.
-    zNameplates.UpdatePlateTransition(nameplate, now)
     ApplyDistanceEffects(nameplate, now, baseAlpha)
     if visualOnly then return end
     -- Target plate castbar runs on its own dedicated frame (nameplates.castbarFrame).

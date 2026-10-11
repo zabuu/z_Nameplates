@@ -59,8 +59,16 @@ local function CreateDummy(index)
   plate:SetAllPoints(base)
   plate:SetFrameLevel(base:GetFrameLevel() + 1)
   plate.isDummy = true
+  plate.parent=base
+  plate.cachedGuid="znpDummy"..index
   plate.sample = SampleForIndex(index)
   base.nameplate = plate
+  plate.textframe=CreateFrame("Frame",nil,plate)
+  plate.textframe:SetAllPoints(plate)
+  plate:EnableMouse(true)
+  plate:SetScript("OnEnter",function() if Z.SetPlateLayoutHover then Z.SetPlateLayoutHover(plate,plate,true) end end)
+  plate:SetScript("OnLeave",function() if Z.SetPlateLayoutHover then Z.SetPlateLayoutHover(plate,plate,false) end end)
+  plate:SetScript("OnHide",function() if Z.SetPlateLayoutHover then Z.SetPlateLayoutHover(plate,plate,false,true) end end)
 
   plate.health = CreateFrame("StatusBar", nil, plate)
   plate.health:SetFrameLevel(plate:GetFrameLevel() + 1)
@@ -69,11 +77,11 @@ local function CreateDummy(index)
   plate.health.text = plate.health:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   plate.health.text:SetAllPoints(plate.health)
 
-  plate.name = plate:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  plate.name = plate.textframe:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   plate.name:SetText(plate.sample.name)
-  plate.level = plate:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  plate.level = plate.textframe:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   plate.level:SetText(plate.sample.level)
-  plate.guild = plate:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  plate.guild = plate.textframe:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   plate.guild:SetText("<Dummy Guild>")
 
   plate.glow = plate:CreateTexture(nil, "BACKGROUND")
@@ -99,19 +107,19 @@ local function CreateDummy(index)
   return base
 end
 
-local function BorderColor(sample)
+local function BorderColor(sample,inCombat)
   local C = Z.config.nameplates
-  if sample.state == "tagged" then return .35, 1, .05, .75 end
+  if inCombat and sample.state == "tagged" then return .35, 1, .05, .75 end
   if sample.state == "target" and C.targethighlight == "1" then
     return Z.GetStringColor(C.highlightcolor)
   end
-  if sample.state == "threat" and C.outcombatstate == "1" and C.ccombatthreat == "1" then
+  if inCombat and sample.state == "threat" and C.outcombatstate == "1" and C.ccombatthreat == "1" then
     return Z.GetStringColor(C.combatthreat)
   end
-  if sample.state == "nothreat" and C.outcombatstate == "1" and C.ccombatnothreat == "1" then
+  if inCombat and sample.state == "nothreat" and C.outcombatstate == "1" and C.ccombatnothreat == "1" then
     return Z.GetStringColor(C.combatnothreat)
   end
-  if sample.state == "stun" and C.outcombatstate == "1" and C.ccombatstun == "1" then
+  if inCombat and sample.state == "stun" and C.outcombatstate == "1" and C.ccombatstun == "1" then
     return Z.GetStringColor(C.combatstun)
   end
   if C.outenemy == "1" then return 1, .1, .1, 1 end
@@ -122,10 +130,13 @@ local function RefreshDummy(base, index)
   local C = Z.config.nameplates
   local plate = base.nameplate
   local sample = plate.sample
+  local inCombat=C.dummy_in_combat=="1"
+  plate.dummyInCombat=inCombat
+  plate.overlapEnabled=C.overlap_enemy=="1" and not (inCombat and C.overlap_combat=="1")
   local font = C.use_unitfonts == "1" and Z.font_unit or Z.font_default
   local fontSize = tonumber(C.name.fontsize) or tonumber(Z.config.global.font_unit_size) or 10
   local fontStyle = C.name.fontstyle or ""
-  if C.name.fontstyle_combat_enabled == "1" then
+  if inCombat and C.name.fontstyle_combat_enabled == "1" then
     fontStyle = C.name.fontstyle_combat or fontStyle
   end
   local width = tonumber(C.width) or 120
@@ -134,7 +145,9 @@ local function RefreshDummy(base, index)
   local totalHeight = math.max(24, fontSize * 2 + barHeight + 8)
 
   base:SetSize(width + 70, totalHeight)
+  plate:SetSize(width+70,totalHeight)
   plate:SetAllPoints(base)
+  if plate.positionTransition then plate.positionTransition.appliedX=nil end
 
   plate.health:ClearAllPoints()
   plate.health:SetPoint("CENTER", plate, "CENTER", 0, -2)
@@ -145,7 +158,13 @@ local function RefreshDummy(base, index)
   local _, nameplateBorder = Z.GetBorderSize("nameplates")
   Z.CreateBackdrop(plate.health, nameplateBorder)
   if plate.health.backdrop then
-    plate.health.backdrop:SetBackdropBorderColor(BorderColor(sample))
+    plate.health.backdrop:SetBackdropBorderColor(BorderColor(sample,inCombat))
+  end
+  if inCombat and C.barcombatstate=="1" then
+    local color=sample.state=="threat" and C.ccombatthreat=="1" and C.combatthreat
+      or sample.state=="nothreat" and C.ccombatnothreat=="1" and C.combatnothreat
+      or sample.state=="stun" and C.ccombatstun=="1" and C.combatstun
+    if color then plate.health:SetStatusBarColor(Z.GetStringColor(color)) end
   end
 
   plate.name:ClearAllPoints()
@@ -160,7 +179,7 @@ local function RefreshDummy(base, index)
     local classColor = Z.classColors[sample.class]
     nr, ng, nb, na = classColor.r, classColor.g, classColor.b, classColor.a
   end
-  if C.namefightcolor == "1" and sample.state == "threat" then nr, ng, nb, na = 1, .4, .2, 1 end
+  if inCombat and C.namefightcolor == "1" then nr, ng, nb, na = 1, .4, .2, 1 end
   plate.name:SetTextColor(nr, ng, nb, na)
 
   plate.level:ClearAllPoints()
@@ -197,7 +216,7 @@ local function RefreshDummy(base, index)
   plate.castbar:SetStatusBarColor(Z.GetStringColor(Z.config.appearance.castbar.castbarcolor))
   Z.CreateBackdrop(plate.castbar)
   SetFont(plate.castbar.spell, font, math.max(7, fontSize - 1), "OUTLINE")
-  plate.castbar:SetShown(sample.cast and C.showcastbar == "1" and C.targetcastbar ~= "1")
+  plate.castbar:SetShown(inCombat and sample.cast and C.showcastbar == "1" and C.targetcastbar ~= "1")
 
   plate.raidicon:ClearAllPoints()
   plate.raidicon:SetPoint("BOTTOM", plate.health, "TOP",
@@ -223,6 +242,7 @@ local function RefreshDummy(base, index)
     local minimum = math.max(.2, math.min(1, (tonumber(C.distance_min_alpha) or 40) / 100))
     alpha = math.min(alpha, 1 - (1 - minimum) * progress)
   end
+  if C.dummy_full_opacity~="0" then alpha=1 end
   base:SetAlpha(alpha)
   base.previewAlpha = alpha
   base.previewScale = scale
@@ -232,6 +252,7 @@ end
 local function PositionDummies()
   local C = Z.config.nameplates
   local overlap = C.overlap_enemy == "1"
+  if C.dummy_in_combat=="1" and C.overlap_combat=="1" then overlap=false end
   local count = cluster.activeCount or 1
   local step = overlap and 7 or 34
   local total = (count - 1) * step
@@ -261,6 +282,22 @@ local function SetDummyCount(count)
   end
   cluster.activeCount = count
   for i = 1, table.getn(plates) do plates[i]:SetShown(i <= count) end
+end
+
+local function UpdatePreviewLayers(self)
+  local settings=Z.options
+  local foreground=Z.config.nameplates.dummy_foreground~="0" and settings and settings:IsShown()
+    and settings.activePage=="Preview"
+  local strata=foreground and "FULLSCREEN" or "BACKGROUND"
+  local level=foreground and settings:GetFrameLevel()+50 or 8
+  if self.previewStrata==strata and self.previewCount==self.activeCount then return end
+  self.previewStrata,self.previewCount=strata,self.activeCount
+  self:SetFrameStrata(strata); self:SetFrameLevel(level)
+  for i=1,(self.activeCount or 0) do
+    local plate=plates[i].nameplate
+    if Z.ApplyPlateLayers then Z.ApplyPlateLayers(plate,strata,level+i*12)
+    else plates[i]:SetFrameStrata(strata); plate:SetFrameStrata(strata) end
+  end
 end
 
 local function CaptureWorldAnchor(self)
@@ -330,8 +367,25 @@ local function UpdateCameraAnchor(self, elapsed)
           (plateY - y) * parentHeight / clusterScale)
         base:SetScale((base.previewScale or 1) * depth / plateDepth)
         base:SetAlpha(base.previewAlpha or 1)
+        base.nameplate.dummyProjection={x=plateX,y=plateY,depth=plateDepth}
       else
         base:SetAlpha(0)
+        base.nameplate.dummyProjection=nil
+      end
+    end
+    self.layoutVisible=self.layoutVisible or {}
+    table.wipe(self.layoutVisible)
+    for i=1,(self.activeCount or 0) do
+      local base=plates[i]
+      if base.nameplate.dummyProjection then self.layoutVisible[base]=base end
+    end
+    if Z.UpdateStickyPlacements and Z.UpdatePlateTransition then
+      self.layoutScene=self.layoutScene or {}
+      local now=GetTime()
+      Z.UpdateStickyPlacements(now,self.layoutVisible,function(plate) return plate.overlapEnabled end,nil,nil,self.layoutScene)
+      for base in pairs(self.layoutVisible) do
+        Z.UpdatePlateTransition(base.nameplate,now)
+        base.nameplate:SetAlpha(base.nameplate.appearanceAlpha or 1)
       end
     end
   else
@@ -382,6 +436,7 @@ function Z.StartDummyCluster()
     this.recaptureAt = GetTime() + .5
   end)
   cluster:SetScript("OnUpdate", function()
+    UpdatePreviewLayers(this)
     if this.recaptureAt and GetTime() >= this.recaptureAt then
       this.recaptureAt = nil
       RefreshCluster(this)
@@ -425,14 +480,16 @@ RefreshCluster = function(self)
   if not self.worldX then CaptureWorldAnchor(self) end
   if self.worldX then
     self:EnableMouse(false)
-    self.hint:SetText("Camera-locked dummy cluster")
+    self.hint:SetText("Camera-locked dummy cluster - "..(Z.config.nameplates.dummy_in_combat=="1" and "in combat" or "idle"))
   else
     self:EnableMouse(true)
     self:SetAlpha(1)
     self:SetScale(1)
-    self.hint:SetText("Dummy cluster - drag to move")
+    self.hint:SetText("Dummy cluster - "..(Z.config.nameplates.dummy_in_combat=="1" and "in combat" or "idle").." - drag to move")
   end
   self:Show()
+  UpdatePreviewLayers(self)
+  if self.worldX then UpdateCameraAnchor(self,.02) end
 end
 
 function Z.PulseDummyDamage()

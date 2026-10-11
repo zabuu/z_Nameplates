@@ -17,7 +17,7 @@ function parent:GetEffectiveScale() return 1 end
 plate = {parent=parent,cachedGuid="A",scale=1}
 function plate:GetEffectiveScale() return self.scale end
 function plate:ClearAllPoints() end
-function plate:SetPoint(a,b,c,x,y) self.anchorX=x; self.anchorY=y end
+function plate:SetPoint(a,b,c,x,y) self.anchorX=x; self.anchorY=y; self.reference=b; self.referencePoint=c end
 projection = {x=100,y=100}
 zAPI = function() return projection.x/1000,projection.y/800,10 end
 function reset()
@@ -82,5 +82,22 @@ assert(plate.anchorY<4)
 -- Settings re-anchor a plate; invalidating the applied anchor reinstates correction.
 plate.anchorY=4; plate.positionTransition.appliedX=nil
 Z.UpdatePlateTransition(plate,.03); assert(plate.anchorY<4)
+
+-- Sticky anchors are screen-relative, immune to native-frame movement later
+-- in the same frame. Changing scale still leaves the same screen position.
+Z.ApplyStickyPlacement=function(p,t,x,y,ui,scale) return 200/scale,150/scale end
+reset(); Z.UpdatePlateTransition(plate,2)
+assert(plate.reference==UIParent and plate.referencePoint=="BOTTOMLEFT")
+near(plate.anchorX,200); near(plate.anchorY,154)
+parent.x=700; parent.y=650
+Z.UpdatePlateTransition(plate,2.01)
+near(plate.anchorX,200); near(plate.anchorY,154)
+plate.scale=.5; Z.UpdatePlateTransition(plate,2.02)
+near(plate.anchorX*.5,200); near((plate.anchorY-4)*.5,150)
+Z.ApplyStickyPlacement=nil; Z.UpdatePlateTransition(plate,2.03)
+assert(plate.reference==parent and plate.referencePoint=="TOP")
 ''')
+render = (root / "nameplates.lua").read_text(encoding="utf-8-sig")
+effects = render[render.index("local function ApplyDistanceEffects("):render.index("local function RefreshVisibleNameplatePool(")]
+assert effects.index("plate:SetScale(scale)") < effects.index("zNameplates.UpdatePlateTransition(plate, now)")
 print("Plate transition regression checks passed (Lua 5.1).")

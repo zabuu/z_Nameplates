@@ -43,6 +43,9 @@ local previous=zAPI
 zAPI=function(...) return previous(...) end
 Z.GetPlateProjection(plates[2],1.01); Z.GetPlayerWorldPosition(1.01)
 assert(projectionCalls==103 and playerCalls==3) -- Replaced API invalidates.
+local dx,dy,dd=Z.GetPlateProjection({isDummy=true,dummyProjection={x=.2,y=.3,depth=25}},2)
+assert(dx==.2 and dy==.3 and dd==25 and projectionCalls==103)
+assert(Z.GetPlateProjection({isDummy=true},2)==nil and projectionCalls==103)
 
 assert(Z.ShouldUpdatePlateDepth(0,50,false))
 assert(not Z.ShouldUpdatePlateDepth(.01,50,false))

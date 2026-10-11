@@ -78,12 +78,18 @@ local defaults = {
     use_unitfonts = "1", overlap_enemy = "0", overlap_friendly = "1",
     overlap_friendly_area = "1", overlap_combat = "1",
     dummy_preview = "0", dummy_count = "5", dummy_x = "-500", dummy_y = "120",
+    dummy_in_combat = "0", dummy_full_opacity = "1", dummy_foreground = "1",
     nameplate_range = "41",
     distance_scale = "1", distance_min_scale = "58",
     smooth_transitions = "1", transition_duration = ".12",
     sticky_placement = "1", sticky_delay = ".15", sticky_return = "1",
+    sticky_stack_rows = "6", sticky_column_gap = "6",
+    sticky_max_displacement = "96", sticky_motion_duration = ".22", sticky_motion_speed = "140",
+    sticky_hover_protection = "1", sticky_anchor_link = "1",
     collision_buffer_x = "0", collision_buffer_y = "0",
     cluster_enabled = "1", cluster_health_band = "20", cluster_threshold = "30",
+    cluster_range_opacity = ".4", cluster_debuff_whitelist = "",
+    dummy_cluster_min = "25", dummy_cluster_max = "85", dummy_cluster_members = "8",
     cluster_count_scale = "1.6", cluster_count_color = "1,.92,.15,1",
     distance_alpha = "1", distance_min_alpha = "37", los_fade = "1",
     los_desaturation = "27",
@@ -402,6 +408,11 @@ end
 -- Reuse native reads within one rendered frame. Cache by identity as well as
 -- time so a recycled pool slot can never inherit the previous unit's result.
 function Z.GetPlateProjection(plate, now)
+  if plate.isDummy then
+    local projection=plate.dummyProjection
+    if projection then return projection.x,projection.y,projection.depth end
+    return
+  end
   local identity = plate.cachedGuid or plate.unit
   if not identity or type(zAPI) ~= "function" then return end
   now = now or GetTime()
@@ -510,14 +521,19 @@ function Z.UpdatePlateTransition(plate, now)
   state.x, state.y, state.px, state.py, state.last = x, y, px, py, now
   local ox = state.offsetX * uiScale / plateScale
   local oy = state.offsetY * uiScale / plateScale + (tonumber(C.vertical_offset) or 0)
+  local reference, referencePoint = parent, "TOP"
   if Z.ApplyStickyPlacement then
     local stickyX, stickyY = Z.ApplyStickyPlacement(plate,now,x,y,uiScale,plateScale)
-    if stickyX then ox,oy=stickyX,stickyY+(tonumber(C.vertical_offset) or 0) end
+    if stickyX then
+      ox,oy=stickyX,stickyY+(tonumber(C.vertical_offset) or 0)
+      reference,referencePoint=UIParent,"BOTTOMLEFT"
+    end
   end
-  if not state.appliedX or math.abs(ox - state.appliedX) > .001
+  if state.appliedReference ~= reference or not state.appliedX or math.abs(ox - state.appliedX) > .001
       or math.abs(oy - state.appliedY) > .001 then
     plate:ClearAllPoints()
-    plate:SetPoint("TOP", parent, "TOP", ox, oy)
+    plate:SetPoint("TOP", reference, referencePoint, ox, oy)
+    state.appliedReference = reference
     state.appliedX, state.appliedY = ox, oy
   end
 end
