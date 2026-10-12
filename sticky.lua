@@ -183,7 +183,7 @@ local function UpdateStickyPlacements(now, visible, shouldOverlap, targetGuid, h
         s.priority = identity==targetGuid or identity==hoverGuid
         s.hovered=C.sticky_hover_protection~="0" and (plate.layoutHoverReceiver~=nil or
           (plate.layoutHoverUntil and now<plate.layoutHoverUntil)) or false
-        if s.hovered then
+        if s.hovered and not s.returningHome then
           s.dx,s.dy=s.displayX,s.displayY; s.vx,s.vy=0,0
         end
         s.x,s.y = s.baseX+s.dx+s.cx,s.baseY+s.dy+s.cy
@@ -231,12 +231,21 @@ local function UpdateStickyPlacements(now, visible, shouldOverlap, targetGuid, h
       return da<db
     end)
     for j=#nearby,33,-1 do nearby[j]=nil end
+    -- Hover ownership can persist as a crowd disappears (including native
+    -- frames that fail to send Leave). It must not pin a lone plate forever
+    -- at a former avoidance slot. Allow a short click grace, then ease home.
+    if n==0 then s.homeClearSince=s.homeClearSince or now
+    else s.homeClearSince=nil end
+    s.returningHome=s.homeClearSince~=nil and now-s.homeClearSince>=.35
     local obstructed=false
     for _,other in ipairs(nearby) do
       if Intersects(s,s.x,s.y,other,-2) then obstructed=true; break end
     end
     if obstructed then s.collisionSince=s.collisionSince or now else s.collisionSince=nil end
-    if not s.hovered and (not obstructed or now-(s.collisionSince or now)>=delay) then
+    if s.returningHome then
+      s.dx,s.dy=0,0
+      s.x,s.y=s.baseX+s.cx,s.baseY+s.cy
+    elseif not s.hovered and (not obstructed or now-(s.collisionSince or now)>=delay) then
       local bestX,bestY=s.dx,s.dy
       local best=Penalty(s,bestX,bestY,count)
       local function Try(dx,dy)
@@ -287,9 +296,10 @@ function Z.ApplyStickyPlacement(plate,now,nativeX,nativeY,uiScale,plateScale)
   s.renderTime=now
   local duration=math.max(.1,math.min(.6,tonumber(Z.config.nameplates.sticky_motion_duration) or .22))
   local speed=math.max(40,math.min(400,tonumber(Z.config.nameplates.sticky_motion_speed) or 140))
+  if s.returningHome and s.hovered then speed=speed*.4 end
   local omega=2/duration
   local function Advance(position,velocity,target)
-    if s.hovered then return position,0 end
+    if s.hovered and not s.returningHome then return position,0 end
     local change=position-target
     local temp=(velocity+omega*change)*elapsed
     local decay=math.exp(-omega*elapsed)
