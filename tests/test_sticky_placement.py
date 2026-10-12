@@ -139,5 +139,20 @@ assert(live.stickyPlacement==original and live.stickyPlacement.baseX==100)
 local ok=pcall(Z.UpdateStickyPlacements,7.03,demoVisible,function() error("test") end,nil,nil,isolated)
 assert(not ok)
 update(7.1); assert(live.stickyPlacement.baseX==100) -- Restored even on error.
+-- A single plate cannot stay pinned at the sideways cap by lingering hover.
+visible={}; local lone=add("lone",500,300)
+update(9.3)
+local stuck=lone.stickyPlacement
+stuck.dx=-57.6; stuck.displayX=-57.6; stuck.dy=0; stuck.displayY=0
+Z.SetPlateLayoutHover(lone,lone.parent,true)
+update(9.31); render(lone,9.31)
+near(stuck.displayX,-57.6) -- Brief click grace; never snap on isolation.
+for i=32,400 do local t=9+i*.01; update(t); render(lone,t) end
+assert(stuck.hovered and stuck.returningHome and #stuck.neighbors==0)
+near(stuck.dx,0); near(stuck.dy,0)
+assert(math.abs(stuck.displayX)<.01 and math.abs(stuck.displayY)<.01)
+-- Renewed crowding restores normal hover protection immediately.
+local newPeer=add("newPeer",500,300); update(13.1)
+assert(not stuck.returningHome and stuck.hovered)
 ''')
 print("Bounded local placement, hover protection, damping and home-return checks passed")

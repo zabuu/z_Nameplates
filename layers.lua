@@ -109,6 +109,8 @@ SlashCmdList.ZNPDUMP = function()
       .." projection="..tostring(placement.sx)..","..tostring(placement.sy)
       .." calibration X="..tostring(placement.biasX)
       .." displacement="..tostring(placement.displayX)..","..tostring(placement.displayY))
+    Say("layout hover="..tostring(placement.hovered).." neighbors="..tostring(placement.neighbors and #placement.neighbors or 0)
+      .." returning home="..tostring(placement.returningHome))
   end
   -- Sizes/layers alone cannot distinguish an off-centre native frame from
   -- an overlay offset. Report comparable screen coordinates on demand only.
