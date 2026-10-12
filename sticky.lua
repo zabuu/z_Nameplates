@@ -112,20 +112,33 @@ local function UpdateStickyPlacements(now, visible, shouldOverlap, targetGuid, h
       sx, sy, depth = Z.GetPlateProjection(plate, now)
     end
     if allowsOverlap then
-      -- Leave the working native layout untouched outside stacking. Record
-      -- its centre-to-projection bias before combat changes the hitbox width.
+      -- Only calibrate from a settled, released hitbox. The native client can
+      -- change its centre while our hitbox shrinks/expands; sampling that frame
+      -- used to save a permanent sideways offset when combat began.
       if eligible and type(sx)=="number" and sx==sx and type(depth)=="number" and depth>0 and ui>0 then
         local nativeX,nativeY=parent:GetCenter()
-        if nativeX and nativeY and type(sy)=="number" and sy==sy then
+        local released=parent:GetWidth()<=1.01 and parent:GetHeight()<=1.01
+        local calibration=plate.stickyAnchorCalibration
+        if released and not (calibration and calibration.identity==identity)
+            and nativeX and nativeY and type(sy)=="number" and sy==sy then
           local scale=plate:GetEffectiveScale()/ui
           if scale>0 then
-            plate.stickyAnchorCalibration={identity=identity,
-              x=(nativeX*parent:GetEffectiveScale()/ui-sx*UIParent:GetWidth())/scale,
-              y=((nativeY+parent:GetHeight()*.5)*parent:GetEffectiveScale()/ui-sy*UIParent:GetHeight())/scale}
+            local x=(nativeX*parent:GetEffectiveScale()/ui-sx*UIParent:GetWidth())/scale
+            local candidate=plate.stickyCalibrationCandidate
+            if not candidate or candidate.identity~=identity or math.abs(candidate.x-x)>.5 then
+              candidate={identity=identity,x=x,since=now}
+              plate.stickyCalibrationCandidate=candidate
+            elseif now-candidate.since>=.05 then
+              plate.stickyAnchorCalibration={identity=identity,x=x,
+                y=((nativeY+parent:GetHeight()*.5)*parent:GetEffectiveScale()/ui-sy*UIParent:GetHeight())/scale}
+              plate.stickyCalibrationCandidate=nil
+            end
           end
-        end
+        else plate.stickyCalibrationCandidate=nil end
       end
       eligible=false; sx,sy,depth=nil,nil,nil
+    elseif plate then
+      plate.stickyCalibrationCandidate=nil
     end
     if type(sx) ~= "number" or type(sy) ~= "number" or type(depth) ~= "number"
         or sx~=sx or sy~=sy or depth~=depth or depth <= 0 or ui <= 0 then

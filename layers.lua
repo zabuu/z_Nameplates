@@ -103,4 +103,44 @@ SlashCmdList.ZNPDUMP = function()
   Say("depth=" .. tostring(plate.depth) .. " scale=" .. tostring(plate.distanceScale)
     .. " clustered=" .. tostring(plate.clusterHidden) .. " cached layers=" .. tostring(plate.cachedStrata)
     .. "/" .. tostring(plate.cachedBaseLevel))
+  local placement=plate.stickyPlacement
+  if placement then
+    Say("layout: home="..tostring(placement.baseX)..","..tostring(placement.baseY)
+      .." projection="..tostring(placement.sx)..","..tostring(placement.sy)
+      .." calibration X="..tostring(placement.biasX)
+      .." displacement="..tostring(placement.displayX)..","..tostring(placement.displayY))
+  end
+  -- Sizes/layers alone cannot distinguish an off-centre native frame from
+  -- an overlay offset. Report comparable screen coordinates on demand only.
+  local ui=UIParent:GetEffectiveScale()
+  local function Center(label,object)
+    if not object or not object.GetCenter or not object.GetEffectiveScale or ui<=0 then return end
+    local x,y=object:GetCenter()
+    if x and y then
+      local scale=object:GetEffectiveScale()/ui
+      Say(label.." center="..string.format("%.2f,%.2f",x*scale,y*scale)
+        .." effective scale="..tostring(object:GetEffectiveScale()))
+    end
+  end
+  Center("native",plate.parent)
+  Center("native health",plate.original and plate.original.healthbar)
+  Center("overlay",plate)
+  Center("health",plate.health)
+  Center("name",plate.name)
+  local cfg=Z.config.nameplates
+  Say("placement mode="..(placement and "custom" or "native")
+    .." enabled="..tostring(cfg.sticky_placement).." zAPI="..type(zAPI)
+    .." overlap enemy/friendly/combat="..tostring(cfg.overlap_enemy).."/"..tostring(cfg.overlap_friendly).."/"..tostring(cfg.overlap_combat))
+  if Z.GetPlateProjection then
+    local x,y,depth=Z.GetPlateProjection(plate,GetTime())
+    if type(x)=="number" and type(y)=="number" then
+      Say("projection="..string.format("%.2f,%.2f",x*UIParent:GetWidth(),y*UIParent:GetHeight()).." depth="..tostring(depth))
+    else Say("projection: unavailable") end
+  end
+  local transition=plate.positionTransition
+  if transition then
+    Say("transition offset="..tostring(transition.offsetX)..","..tostring(transition.offsetY)
+      .." applied="..tostring(transition.appliedX)..","..tostring(transition.appliedY)
+      .." reference="..(transition.appliedReference==UIParent and "screen" or "native"))
+  end
 end

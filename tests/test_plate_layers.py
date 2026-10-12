@@ -23,6 +23,8 @@ function methods:IsVisible() return true end
 function methods:GetAlpha() return 1 end
 function methods:GetWidth() return 100 end
 function methods:GetHeight() return 10 end
+function methods:GetCenter() return 250,125 end
+function methods:GetEffectiveScale() return .9 end
 function methods:GetMinMaxValues() return 0,100 end
 function methods:GetValue() return 45 end
 function frame(parent)
@@ -79,7 +81,17 @@ UnitName=function() return "Test Mob" end
 C_NamePlate={GetNamePlateForUnit=function() return nil end}
 plate.cachedGuid="guid"; native.nameplate=plate
 Z.nameplates={visiblePlates={[native]=native}}
+UIParent={GetEffectiveScale=function() return 1 end,GetWidth=function() return 1000 end,GetHeight=function() return 800 end}
+Z.config={nameplates={sticky_placement="1"}}
+GetTime=function() return 1 end
+Z.GetPlateProjection=function() return .3,.2,50 end
+plate.positionTransition={offsetX=-12,offsetY=0,appliedX=-13.33,appliedY=0,appliedReference=native}
 SlashCmdList.ZNPDUMP()
 assert(#messages>5 and string.find(messages[1],"Test Mob"))
+local diagnostic=table.concat(messages,"\\n")
+assert(string.find(diagnostic,"native center=225.00,112.50",1,true))
+assert(string.find(diagnostic,"placement mode=native",1,true))
+assert(string.find(diagnostic,"projection=300.00,160.00",1,true))
+assert(string.find(diagnostic,"transition offset=-12,0",1,true))
 ''')
 print("Explicit layer ordering, strata resets, no-op repairs, and znpdump checks passed.")

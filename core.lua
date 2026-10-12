@@ -545,16 +545,13 @@ function Z.PositionLevelText(plate, automaticReference, gap)
   local reference = C.levelreference == "NAME" and plate.name
     or C.levelreference == "HEALTH" and plate.health or automaticReference
   local position = C.levelposition or "LEFT"
-  local points = {
-    LEFT = {"RIGHT", "LEFT", -(gap or 3), 0},
-    RIGHT = {"LEFT", "RIGHT", gap or 3, 0},
-    TOP = {"BOTTOM", "TOP", 0, gap or 3},
-    BOTTOM = {"TOP", "BOTTOM", 0, -(gap or 3)},
-  }
-  local anchor = points[position] or points.LEFT
+  local point, relativePoint, x, y = "RIGHT", "LEFT", -(gap or 3), 0
+  if position == "RIGHT" then point, relativePoint, x = "LEFT", "RIGHT", gap or 3
+  elseif position == "TOP" then point, relativePoint, x, y = "BOTTOM", "TOP", 0, gap or 3
+  elseif position == "BOTTOM" then point, relativePoint, x, y = "TOP", "BOTTOM", 0, -(gap or 3) end
   plate.level:ClearAllPoints()
-  plate.level:SetPoint(anchor[1], reference or plate.name, anchor[2],
-    anchor[3] + (tonumber(C.levelx) or 0), anchor[4] + (tonumber(C.levely) or 0))
+  plate.level:SetPoint(point, reference or plate.name, relativePoint,
+    x + (tonumber(C.levelx) or 0), y + (tonumber(C.levely) or 0))
 end
 
 function Z.throttle:Get(category)

@@ -615,11 +615,13 @@ function zNameplates.StartNameplates()
     end
   end
 
-  local function SaveVisualColor(object, getter)
+  local function SaveVisualColor(object, getter, color)
     if not object or not object[getter] then return nil end
     local r, g, b, a = object[getter](object)
     if not r then return nil end
-    return { r, g, b, a or 1 }
+    color = color or {}
+    color[1], color[2], color[3], color[4] = r, g, b, a or 1
+    return color
   end
 
   local function RestoreVisualColor(object, setter, color)
@@ -646,22 +648,43 @@ function zNameplates.StartNameplates()
     end
   end
 
+  local function RestoreLineOfSightColors(plate, colors)
+    if not colors then return end
+    RestoreVisualColor(plate.health, "SetStatusBarColor", colors.health)
+    if plate.health then
+      RestoreVisualColor(plate.health.backdrop, "SetBackdropBorderColor", colors.healthBorder)
+    end
+    RestoreVisualColor(plate.castbar, "SetStatusBarColor", colors.castbar)
+    if plate.castbar then
+      RestoreVisualColor(plate.castbar.backdrop, "SetBackdropBorderColor", colors.castBorder)
+    end
+    RestoreVisualColor(plate.name, "SetTextColor", colors.name)
+    RestoreVisualColor(plate.level, "SetTextColor", colors.level)
+    RestoreVisualColor(plate.guild, "SetTextColor", colors.guild)
+    if plate.health then RestoreVisualColor(plate.health.text, "SetTextColor", colors.healthText) end
+    if plate.castbar then
+      RestoreVisualColor(plate.castbar.text, "SetTextColor", colors.castText)
+      RestoreVisualColor(plate.castbar.spell, "SetTextColor", colors.spell)
+    end
+    RestoreVisualColor(plate.questIcon, "SetTextColor", colors.quest)
+  end
+
   local function SetLineOfSightDesaturation(plate, outOfSight, force)
     local changed = (plate.losDesaturated and true or false) ~= (outOfSight and true or false)
-    if outOfSight and not plate.losVisualColors then
-      plate.losVisualColors = {
-        health = SaveVisualColor(plate.health, "GetStatusBarColor"),
-        healthBorder = plate.health and SaveVisualColor(plate.health.backdrop, "GetBackdropBorderColor"),
-        castbar = SaveVisualColor(plate.castbar, "GetStatusBarColor"),
-        castBorder = plate.castbar and SaveVisualColor(plate.castbar.backdrop, "GetBackdropBorderColor"),
-        name = SaveVisualColor(plate.name, "GetTextColor"),
-        level = SaveVisualColor(plate.level, "GetTextColor"),
-        guild = SaveVisualColor(plate.guild, "GetTextColor"),
-        healthText = plate.health and SaveVisualColor(plate.health.text, "GetTextColor"),
-        castText = plate.castbar and SaveVisualColor(plate.castbar.text, "GetTextColor"),
-        spell = plate.castbar and SaveVisualColor(plate.castbar.spell, "GetTextColor"),
-        quest = SaveVisualColor(plate.questIcon, "GetTextColor"),
-      }
+    if outOfSight and (not plate.losVisualColors or force) then
+      local colors = plate.losVisualColors or {}
+      colors.health = SaveVisualColor(plate.health, "GetStatusBarColor", colors.health)
+      colors.healthBorder = plate.health and SaveVisualColor(plate.health.backdrop, "GetBackdropBorderColor", colors.healthBorder)
+      colors.castbar = SaveVisualColor(plate.castbar, "GetStatusBarColor", colors.castbar)
+      colors.castBorder = plate.castbar and SaveVisualColor(plate.castbar.backdrop, "GetBackdropBorderColor", colors.castBorder)
+      colors.name = SaveVisualColor(plate.name, "GetTextColor", colors.name)
+      colors.level = SaveVisualColor(plate.level, "GetTextColor", colors.level)
+      colors.guild = SaveVisualColor(plate.guild, "GetTextColor", colors.guild)
+      colors.healthText = plate.health and SaveVisualColor(plate.health.text, "GetTextColor", colors.healthText)
+      colors.castText = plate.castbar and SaveVisualColor(plate.castbar.text, "GetTextColor", colors.castText)
+      colors.spell = plate.castbar and SaveVisualColor(plate.castbar.spell, "GetTextColor", colors.spell)
+      colors.quest = SaveVisualColor(plate.questIcon, "GetTextColor", colors.quest)
+      plate.losVisualColors = colors
     end
 
     local colors = plate.losVisualColors
@@ -684,24 +707,8 @@ function zNameplates.StartNameplates()
         GrayVisualColor(plate.castbar.spell, "SetTextColor", colors.spell, amount)
       end
       GrayVisualColor(plate.questIcon, "SetTextColor", colors.quest, amount)
-    elseif colors then
-      RestoreVisualColor(plate.health, "SetStatusBarColor", colors.health)
-      if plate.health then
-        RestoreVisualColor(plate.health.backdrop, "SetBackdropBorderColor", colors.healthBorder)
-      end
-      RestoreVisualColor(plate.castbar, "SetStatusBarColor", colors.castbar)
-      if plate.castbar then
-        RestoreVisualColor(plate.castbar.backdrop, "SetBackdropBorderColor", colors.castBorder)
-      end
-      RestoreVisualColor(plate.name, "SetTextColor", colors.name)
-      RestoreVisualColor(plate.level, "SetTextColor", colors.level)
-      RestoreVisualColor(plate.guild, "SetTextColor", colors.guild)
-      if plate.health then RestoreVisualColor(plate.health.text, "SetTextColor", colors.healthText) end
-      if plate.castbar then
-        RestoreVisualColor(plate.castbar.text, "SetTextColor", colors.castText)
-        RestoreVisualColor(plate.castbar.spell, "SetTextColor", colors.spell)
-      end
-      RestoreVisualColor(plate.questIcon, "SetTextColor", colors.quest)
+    elseif not outOfSight and colors then
+      RestoreLineOfSightColors(plate, colors)
       plate.losVisualColors = nil
       plate.eventcache = true
     end
@@ -1253,6 +1260,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         plate.nameplate.positionTransition = nil
         plate.nameplate.stickyPlacement = nil
         plate.nameplate.stickyAnchorCalibration = nil
+        plate.nameplate.stickyCalibrationCandidate = nil
         plate.nameplate.distanceScaleIdentity = nil
         plate.nameplate.distanceScale = nil
         plate.nameplate.distanceVisualTime = nil
@@ -1317,6 +1325,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         plate.nameplate.positionTransition = nil
         plate.nameplate.stickyPlacement = nil
         plate.nameplate.stickyAnchorCalibration = nil
+        plate.nameplate.stickyCalibrationCandidate = nil
         plate.nameplate.depth = nil
         plate.nameplate.cachedStrata = nil
         plate.nameplate.cachedBaseLevel = nil
@@ -2779,6 +2788,10 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
 
   local hookOnDataChanged = nameplates.OnDataChanged
   nameplates.OnDataChanged = function(self, nameplate)
+    if nameplate.losOutOfSight then
+      -- Refresh from original colours, never from a previously grayed value.
+      RestoreLineOfSightColors(nameplate, nameplate.losVisualColors)
+    end
     hookOnDataChanged(self, nameplate)
     zNameplates.RepairPlateTextLayers(nameplate)
     if nameplate.clusterGroup then nameplate.clusterRenderDirty = true end

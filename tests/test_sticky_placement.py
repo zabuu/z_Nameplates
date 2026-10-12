@@ -14,8 +14,9 @@ clock=0; GetTime=function() return clock end
 visible={}
 function add(id,x,y)
  local f={x=x,y=y}
- function f:GetCenter() return self.x,self.y-10 end
- function f:GetHeight() return 20 end
+ function f:GetCenter() return self.x,self.y-self:GetHeight()*.5 end
+ function f:GetHeight() return self.height or 20 end
+ function f:GetWidth() return self.width or 1 end
  function f:GetEffectiveScale() return 1 end
  function f:IsVisible() return true end
  local p={parent=f,cachedGuid=id,px=x,py=y,depth=10}
@@ -50,13 +51,30 @@ a.px=nil; update(.11); assert(a.stickyPlacement==saved)
 a.px=120; update(.12); assert(a.stickyPlacement==saved)
 a.px=nil; update(.30); assert(not a.stickyPlacement)
 a.px=120; update(.35)
--- Pre-combat calibration is preserved once, including the home height.
-overlap=true; a.parent.x=180; a.parent.y=120; update(.4)
+-- Never capture an expanded hitbox or a one-frame resize shift as home.
+overlap=true; a.parent.width=120; a.parent.x=60; update(.36)
+assert(not a.stickyAnchorCalibration)
+a.parent.width=1; a.parent.height=1; update(.37)
+assert(not a.stickyAnchorCalibration)
+-- A stable, released pre-combat correction is preserved, including home height.
+a.parent.x=180; a.parent.y=120; update(.4)
+assert(not a.stickyAnchorCalibration)
+update(.46)
 assert(not a.stickyPlacement and a.stickyAnchorCalibration.x==60)
-a.parent.x=600; a.parent.y=300; overlap=false; update(.45)
+-- Later native resize/position noise must not overwrite the trusted correction.
+a.parent.width=120; a.parent.x=60; update(.47)
+a.parent.width=1; update(.48)
+assert(a.stickyAnchorCalibration.x==60)
+a.parent.x=600; a.parent.y=300; overlap=false; update(.5)
 near(a.stickyPlacement.baseX,180); near(a.stickyPlacement.baseY,120)
-a.cachedGuid="replacement"; update(.5)
+a.cachedGuid="replacement"; update(.55)
 near(a.stickyPlacement.baseX,120); assert(a.stickyPlacement.order>order)
+-- Combat before calibration settles cannot retain the transient left offset.
+visible={}; local sudden=add("sudden",300,200)
+sudden.parent.height=1; sudden.parent.x=240; overlap=true; update(.6)
+overlap=false; sudden.parent.width=160; update(.61)
+near(sudden.stickyPlacement.baseX,300)
+assert(not sudden.stickyCalibrationCandidate)
 -- A hovered plate holds its displacement; the neighbour makes room.
 visible={}; a=add("hover",100,100); b=add("peer",100,100)
 Z.SetPlateLayoutHover(a,a.parent,true)

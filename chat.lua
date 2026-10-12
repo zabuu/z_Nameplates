@@ -4,6 +4,7 @@ local Z = zNameplates
 local watcher = CreateFrame("Frame", "zNameplatesChatWatcher")
 local messages, labels, previousCVars = {}, {}, {}
 local projectedAnchors = {}
+local speakers, speakerPool = {}, {}
 local suppressedNative = {}
 local channels = {
   CHAT_MSG_SAY = {"say", "SAY"}, CHAT_MSG_YELL = {"yell", "YELL"},
@@ -298,8 +299,10 @@ watcher:SetScript("OnUpdate", function()
   end
   for _, label in pairs(labels) do label:Hide() end
   for _, anchor in pairs(projectedAnchors) do anchor:Hide() end
+  if not next(messages) then return end
   local projectedCount = 0
-  local speakers = {}
+  table.wipe(speakers)
+  local speakerCount = 0
   for parent in pairs(Z.nameplates and Z.nameplates.visiblePlates or {}) do
     local plate = parent.nameplate
     local unit = plate and (plate.unit or plate.cachedGuid)
@@ -309,7 +312,13 @@ watcher:SetScript("OnUpdate", function()
       if key then
         local entry = speakers[key]
         if entry then entry.ambiguous = true
-        else speakers[key] = {plate=plate, guid=UnitGUID and UnitGUID(unit)} end
+        else
+          speakerCount = speakerCount + 1
+          entry = speakerPool[speakerCount]
+          if not entry then entry = {}; speakerPool[speakerCount] = entry end
+          entry.plate, entry.guid, entry.ambiguous = plate, UnitGUID and UnitGUID(unit), nil
+          speakers[key] = entry
+        end
       end
     end
   end
