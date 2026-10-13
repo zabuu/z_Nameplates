@@ -146,6 +146,7 @@ SlashCmdList.ZNPDUMP = function()
     .." overlap enemy/friendly/combat="..tostring(cfg.overlap_enemy).."/"..tostring(cfg.overlap_friendly).."/"..tostring(cfg.overlap_combat))
   if Z.GetPlateProjection then
     local x,y,depth=Z.GetPlateProjection(plate,GetTime())
+    if plate.projectionSample then Say("anchor source="..tostring(plate.projectionSample.command)) end
     if type(x)=="number" and type(y)=="number" then
       Say("projection="..string.format("%.2f,%.2f",x*UIParent:GetWidth(),y*UIParent:GetHeight()).." depth="..tostring(depth))
     else Say("projection: unavailable") end

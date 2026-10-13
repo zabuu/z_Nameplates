@@ -420,9 +420,10 @@ function Z.GetPlateProjection(plate, now)
   now = now or GetTime()
   local sample = plate.projectionSample
   if not sample then sample = {}; plate.projectionSample = sample end
-  if sample.time ~= now or sample.identity ~= identity or sample.api ~= zAPI then
-    sample.time, sample.identity, sample.api = now, identity, zAPI
-    local ok, x, y, depth, wx, wy, wz = pcall(zAPI, "projectUnit", identity, 0)
+  local command = Z.GetPlateProjectionCommand()
+  if sample.time ~= now or sample.identity ~= identity or sample.api ~= zAPI or sample.command ~= command then
+    sample.time, sample.identity, sample.api, sample.command = now, identity, zAPI, command
+    local ok, x, y, depth, wx, wy, wz = pcall(zAPI, command, identity, 0)
     sample.x, sample.y, sample.depth = nil, nil, nil
     sample.wx, sample.wy, sample.wz = nil, nil, nil
     if ok then
@@ -432,6 +433,19 @@ function Z.GetPlateProjection(plate, now)
   end
   local x,y=Z.NormalizeWorldProjection(sample.x,sample.y)
   return x, y, sample.depth, sample.wx, sample.wy, sample.wz
+end
+
+function Z.GetPlateProjectionCommand()
+  -- Probe once per API instance, not once per plate/frame. Older DLLs keep
+  -- working until the client restarts; a failed model projection is a gap,
+  -- never a reason to switch to the lower collision-height anchor mid-frame.
+  if Z.plateProjectionAPI ~= zAPI then
+    Z.plateProjectionAPI = zAPI
+    local ok, version = pcall(zAPI, "version")
+    Z.plateProjectionCommand = ok and type(version)=="number" and version>=1.9
+      and "projectNameplate" or "projectUnit"
+  end
+  return Z.plateProjectionCommand or "projectUnit"
 end
 
 -- A still-visible pooled frame is not evidence that its old unit is current.

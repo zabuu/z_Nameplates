@@ -30,8 +30,13 @@ opens. Relocation is damped and speed-limited; genuine camera/mob motion follows
 immediately. The displacement limit, smoothing, speed and hover protection are
 adjustable. Hover pauses layout relocation and holds briefly after departure;
 displaced selected/hovered plates can show a subtle dotted anchor connection.
-All world-owned plates use the projected head anchor plus the configured
-vertical offset. Overlap/combat settings change avoidance only; they never
+All world-owned plates use the projected nameplate anchor plus the configured
+vertical offset. With zAPI 1.9+, that anchor is the client's model name
+attachment plus its native clearance, taken before Blizzard's collision
+layout. This restores the original height without capturing an already-pushed
+frame, applying a manual lift, or reseeding it on combat/toggle changes. Older
+DLLs retain the collision-height projection until the client restarts with
+the updated DLL. Overlap/combat settings change avoidance only; they never
 replace that anchor or recalibrate height from Blizzard's frames. Native
 collision frames are reduced to 1x1; the visible overlay handles clicks/hover.
 Friendly/pet and hostile plates have separate collision groups. Live unit

@@ -26,7 +26,8 @@ UnitThreatSituation=function(a,u) return units[u] and units[u].threat end
 UnitIsUnit=function(a,b) return a==b end
 C_NamePlate={GetNamePlateForUnit=function(u) return associations[u] end}
 zAPI=function(command,guid)
- assert(command=="projectUnit")
+ if command=="version" then return 1.9 end
+ assert(command=="projectNameplate")
  nativeCalls=nativeCalls+1
  local u=objects[guid]
  if not u or not u.projectable then return nil end
