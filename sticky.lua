@@ -32,7 +32,15 @@ local function Measure(plate,ui)
       if object.GetText then local text=object:GetText(); if not text or text=="" then return end end
       local l,r,t,b=object:GetLeft(),object:GetRight(),object:GetTop(),object:GetBottom()
       if not l or not r or not t or not b then return end
-      local k=(object.GetEffectiveScale and object:GetEffectiveScale() or plate:GetEffectiveScale())/ui
+      -- FontStrings/Textures are Regions, not Frames: on 1.12 they do not
+      -- expose GetEffectiveScale. Their coordinates belong to their parent
+      -- frame, including the quarter-scale smooth-font surface. Falling back
+      -- to the whole plate scale made those boxes four times too large.
+      local owner=object.GetParent and object:GetParent()
+      local effective=object.GetEffectiveScale and object:GetEffectiveScale()
+        or owner and owner.GetEffectiveScale and owner:GetEffectiveScale()
+        or plate:GetEffectiveScale()
+      local k=effective/ui
       l,r,t,b=l*k-x,r*k-x,t*k-top,b*k-top
       left=math.min(left or l,l); right=math.max(right or r,r)
       bottom=math.min(bottom or b,b); upper=math.max(upper or t,t)

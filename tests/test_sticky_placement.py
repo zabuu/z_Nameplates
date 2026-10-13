@@ -154,5 +154,47 @@ assert(math.abs(stuck.displayX)<.01 and math.abs(stuck.displayY)<.01)
 -- Renewed crowding restores normal hover protection immediately.
 local newPeer=add("newPeer",500,300); update(13.1)
 assert(not stuck.returningHome and stuck.hovered)
+-- Real 1.12 FontStrings lack GetEffectiveScale. Their coordinate space is
+-- the quarter-scale font surface, not the full plate. Distant text must not
+-- inflate the collision box across the screen and trigger sideways avoidance.
+visible={}
+local function measured(id,x,y)
+ local p=add(id,x,y)
+ function p:GetEffectiveScale() return .9 end
+ function p:GetCenter() return self.px/.9,(self.py-10)/.9 end
+ function p:GetTop() return self.py/.9 end
+ local surface={GetEffectiveScale=function() return .225 end}
+ local function region(owner,scale,left,right,top,bottom,text)
+  return {
+   GetParent=function() return owner end,
+   IsShown=function() return true end,
+   GetLeft=function() return (p.px+left)/scale end,
+   GetRight=function() return (p.px+right)/scale end,
+   GetTop=function() return (p.py+top)/scale end,
+   GetBottom=function() return (p.py+bottom)/scale end,
+   GetText=text and function() return text end or nil,
+  }
+ end
+ p.health=region(p,.9,-40,40,0,-20)
+ p.name=region(surface,.225,-40,40,14,2,"Visible name")
+ return p
+end
+local leftPlate=measured("leftText",350,450)
+local rightPlate=measured("rightText",800,450)
+assert(not leftPlate.name.GetEffectiveScale)
+for i=0,100 do
+ local t=14+i*.01; update(t); render(leftPlate,t); render(rightPlate,t)
+end
+near(leftPlate.stickyPlacement.contentW,80)
+near(leftPlate.stickyPlacement.contentH,34)
+near(leftPlate.stickyPlacement.cx,0)
+assert(#leftPlate.stickyPlacement.neighbors==0)
+near(leftPlate.stickyPlacement.displayX,0)
+near(rightPlate.stickyPlacement.displayX,0)
+-- Correctly measured names still participate in genuine close collisions.
+rightPlate.px=350; rightPlate.parent.x=350
+for i=0,100 do local t=16+i*.01; update(t); render(leftPlate,t); render(rightPlate,t) end
+assert(#leftPlate.stickyPlacement.neighbors==1)
+assert(leftPlate.stickyPlacement.dx~=rightPlate.stickyPlacement.dx or leftPlate.stickyPlacement.dy~=rightPlate.stickyPlacement.dy)
 ''')
 print("Bounded local placement, hover protection, damping and home-return checks passed")

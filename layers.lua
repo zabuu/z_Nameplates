@@ -116,12 +116,16 @@ SlashCmdList.ZNPDUMP = function()
   -- an overlay offset. Report comparable screen coordinates on demand only.
   local ui=UIParent:GetEffectiveScale()
   local function Center(label,object)
-    if not object or not object.GetCenter or not object.GetEffectiveScale or ui<=0 then return end
+    if not object or not object.GetCenter or ui<=0 then return end
+    local owner=object.GetParent and object:GetParent()
+    local effective=object.GetEffectiveScale and object:GetEffectiveScale()
+      or owner and owner.GetEffectiveScale and owner:GetEffectiveScale()
+    if not effective then return end
     local x,y=object:GetCenter()
     if x and y then
-      local scale=object:GetEffectiveScale()/ui
+      local scale=effective/ui
       Say(label.." center="..string.format("%.2f,%.2f",x*scale,y*scale)
-        .." effective scale="..tostring(object:GetEffectiveScale()))
+        .." effective scale="..tostring(effective))
     end
   end
   Center("native",plate.parent)
@@ -129,6 +133,10 @@ SlashCmdList.ZNPDUMP = function()
   Center("overlay",plate)
   Center("health",plate.health)
   Center("name",plate.name)
+  if placement then
+    Say("collision bounds="..tostring(placement.w).."x"..tostring(placement.h)
+      .." center offset="..tostring(placement.cx)..","..tostring(placement.cy))
+  end
   local cfg=Z.config.nameplates
   Say("placement mode="..(placement and "custom" or "native")
     .." enabled="..tostring(cfg.sticky_placement).." zAPI="..type(zAPI)
