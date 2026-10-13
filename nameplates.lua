@@ -485,7 +485,7 @@ function zNameplates.StartNameplates()
             if not p.nameplate.cachedGuid then
               p.nameplate.cachedGuid = UnitGUID(u)
             end
-            if not visiblePlates[p] then
+            if zNameplates.IsPlateUnitCurrent(p.nameplate,now) and not visiblePlates[p] then
               visiblePlates[p] = p
               visiblePlateCount = visiblePlateCount + 1
             end
@@ -497,7 +497,8 @@ function zNameplates.StartNameplates()
     table.wipe(depthPlates)
     local count = 0
     for plate in pairs(visiblePlates) do
-      if plate:IsVisible() and plate.nameplate and not plate.nameplate.clusterHidden then
+      if plate:IsVisible() and plate.nameplate and not plate.nameplate.clusterHidden
+          and zNameplates.IsPlateUnitCurrent(plate.nameplate,now) then
         count = count + 1
         depthPlates[count] = plate
         local np = plate.nameplate
@@ -822,6 +823,8 @@ function zNameplates.StartNameplates()
     local visualAlpha = math.min(distanceAlpha, losAlpha)
     local desiredAlpha = math.max(0, math.min(1,
       (baseAlpha or 1) * visualAlpha * (plate.appearanceAlpha or 1)))
+    if plate.worldPlacementHidden then desiredAlpha=0 end
+    if plate.clusterCountFrame then plate.clusterCountFrame:SetAlpha(plate.worldPlacementHidden and 0 or 1) end
     if not plate.cachedAlpha or abs(plate.cachedAlpha - desiredAlpha) > .0005 then
       plate:SetAlpha(desiredAlpha)
       plate.cachedAlpha = desiredAlpha
@@ -1256,6 +1259,10 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         local guid = UnitGUID(arg1)
         plate.nameplate.cachedGuid = guid
         plate.nameplate.unit = arg1
+        plate.nameplate.unitValidation=nil
+        plate.nameplate.projectionSample=nil
+        plate.nameplate.worldPlacementOwned=nil
+        plate.nameplate.worldPlacementHidden=nil
         zNameplates.RefreshOwnedPlateMouseover(plate.nameplate, true)
         plate.nameplate.positionTransition = nil
         plate.nameplate.stickyPlacement = nil
@@ -1322,6 +1329,10 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         plate.nameplate.questIconRevision = nil
         plate.nameplate.cachedGuid = nil
         plate.nameplate.unit = nil
+        plate.nameplate.unitValidation=nil
+        plate.nameplate.projectionSample=nil
+        plate.nameplate.worldPlacementOwned=nil
+        plate.nameplate.worldPlacementHidden=nil
         plate.nameplate.positionTransition = nil
         plate.nameplate.stickyPlacement = nil
         plate.nameplate.stickyAnchorCalibration = nil
@@ -2399,9 +2410,10 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     -- =========================================================================
     local overlapEnabled = ShouldOverlap(nameplate)
     local edgeReleased = ReleaseAtScreenEdge(frame, nameplate, overlapEnabled)
-    local collisionReleased = overlapEnabled or edgeReleased or nameplate.clusterGroup ~= nil
+    local collisionReleased = overlapEnabled or edgeReleased or nameplate.clusterGroup ~= nil or nameplate.worldPlacementOwned
     local useOverlap = collisionReleased or nameplate.stickyPlacement ~= nil or C.nameplates["vertical_offset"] ~= "0"
     local clickable = nameplate.clusterGroup ~= nil or C.nameplates["clickthrough"] ~= "1"
+    if nameplate.worldPlacementHidden then clickable=false end
     if nameplate.isFriendly and C.nameplates.clickthrough_friendly == "1" then clickable = false end
 
     if not clickable then
@@ -2416,7 +2428,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     end
 
     if collisionReleased then
-      if frame:GetWidth() > 1 then
+      if abs(frame:GetWidth()-1)>.01 or abs(frame:GetHeight()-1)>.01 then
         frame:SetSize(1, 1)
       end
     else

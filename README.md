@@ -30,23 +30,30 @@ opens. Relocation is damped and speed-limited; genuine camera/mob motion follows
 immediately. The displacement limit, smoothing, speed and hover protection are
 adjustable. Hover pauses layout relocation and holds briefly after departure;
 displaced selected/hovered plates can show a subtle dotted anchor connection.
-Overlap-allowed plates retain native placement. Their centre-to-projection
-bias is recorded before combat, then preserved during sticky stacking without
-adopting subsequent native collision shifts or applying the bias twice.
+All world-owned plates use the projected head anchor plus the configured
+vertical offset. Overlap/combat settings change avoidance only; they never
+replace that anchor or recalibrate height from Blizzard's frames. Native
+collision frames are reduced to 1x1; the visible overlay handles clicks/hover.
+Friendly/pet and hostile plates have separate collision groups. Live unit
+GUIDs and frame associations are validated; recycled/stale slots are excluded.
 Sticky visuals use screen-relative anchors calculated after distance scaling,
 so later native collision-frame movement cannot shove them for one frame.
-Brief missing projection samples retain the last good placement for at most
-0.12 sec; hidden or recycled units never inherit that grace period.
+Brief missing projection samples hold the last good placement for 0.12 sec,
+then hide without discarding the anchor state or returning to native stacking.
+Missing samples are not obstacles. Hidden or recycled units never inherit grace.
 Meaningful collisions must persist for 0.15 sec by default. Open space is
 reclaimed continuously through the same non-bouncy motion, not a delayed snap.
 Collision bounds use the visible name, level, guild, health/cast bars, raid
 marker and auras, not the old oversized placeholder. Dense scenes can still
 overlap at the displacement limit; clustering is preferable to detached towers.
-Disable it to restore native placement with the existing transition smoothing. Missing projection data,
-teleports and scenes above 100 non-overlapping plates safely fall back.
+Disable it (or run without zAPI) to restore native placement with the existing
+transition smoothing. Above 100 projected plates, avoidance work is suspended
+while stable world anchoring continues; clustering is recommended.
 General / Stacking provides independent horizontal and vertical plate buffers
 (0–40 px per side, default 0). Buffers scale with the plate and affect both
 native collision frames and sticky placement, not visible bar/text dimensions.
+When world anchoring owns the plates, only the custom collision bounds use
+these buffers; native frames stay 1x1 so they cannot create a second layout.
 
 Settings use an opaque, screen-fitting panel with sidebar categories, grouped
 scrollable rows, and cross-category search. Unrelated controls and saved

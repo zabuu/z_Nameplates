@@ -46,5 +46,19 @@ nameplate.isFriendly=true; update(); assert(frame.mouse)
 C.nameplates.collision_buffer_x="5"; C.nameplates.collision_buffer_y="7"
 update(); assert(frame.width==90 and frame.height==34)
 assert(nameplate.width==80 and nameplate.height==20)
+-- World-owned mode releases the native collision rectangle even with overlap
+-- disabled; its overlay keeps the established friendly/spell click-through rules.
+nameplate.worldPlacementOwned=true; overlap=false
+for _,spell in ipairs({false,true}) do
+ targeting=spell
+ nameplate.isFriendly=true; C.nameplates.clickthrough_friendly="1"; update()
+ assert(frame.width==1 and frame.height==1 and not frame.mouse and not nameplate.mouse)
+ nameplate.isFriendly=false; update()
+ assert(not frame.mouse and nameplate.mouse==not spell)
+end
+targeting=false; nameplate.worldPlacementHidden=true; update()
+assert(not frame.mouse and not nameplate.mouse)
+nameplate.worldPlacementHidden=nil; nameplate.worldPlacementOwned=false
+update(); assert(frame.mouse and frame.width==90 and frame.height==34)
 ''')
 print("Friendly click-through checks passed")

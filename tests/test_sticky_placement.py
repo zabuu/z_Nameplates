@@ -19,7 +19,7 @@ function add(id,x,y)
  function f:GetWidth() return self.width or 1 end
  function f:GetEffectiveScale() return 1 end
  function f:IsVisible() return true end
- local p={parent=f,cachedGuid=id,px=x,py=y,depth=10}
+ local p={parent=f,cachedGuid=id,px=x,py=y,depth=10,isDummy=true}
  function p:GetEffectiveScale() return 1 end
  function p:GetWidth() return 80 end
  function p:GetHeight() return 20 end
@@ -38,6 +38,8 @@ end
 function near(a,b) assert(math.abs(a-b)<.001,tostring(a).." != "..tostring(b)) end
 a=add("a",100,100)
 ''')
+core=(root / "core.lua").read_text(encoding="utf-8-sig")
+lua.execute('local Z=zNameplates\n'+core[core.index("function Z.IsPlateUnitCurrent("):core.index("-- zAPI projects in the native WorldFrame")])
 lua.execute((root / "sticky.lua").read_text(encoding="utf-8-sig"))
 lua.execute('''
 update(0); local order=a.stickyPlacement.order
@@ -49,24 +51,21 @@ x,y=render(a,.1); near(x,120); near(y,120)
 local saved=a.stickyPlacement
 a.px=nil; update(.11); assert(a.stickyPlacement==saved)
 a.px=120; update(.12); assert(a.stickyPlacement==saved)
-a.px=nil; update(.30); assert(not a.stickyPlacement)
+a.px=nil; update(.30); assert(a.stickyPlacement==saved and a.worldPlacementHidden)
 a.px=120; update(.35)
--- Never capture an expanded hitbox or a one-frame resize shift as home.
+assert(a.stickyPlacement==saved and not a.worldPlacementHidden)
+-- Native resizing and overlap/combat changes can never reseed the world home.
 overlap=true; a.parent.width=120; a.parent.x=60; update(.36)
-assert(not a.stickyAnchorCalibration)
+assert(a.stickyPlacement==saved and not saved.avoidance)
 a.parent.width=1; a.parent.height=1; update(.37)
-assert(not a.stickyAnchorCalibration)
--- A stable, released pre-combat correction is preserved, including home height.
 a.parent.x=180; a.parent.y=120; update(.4)
-assert(not a.stickyAnchorCalibration)
 update(.46)
-assert(not a.stickyPlacement and a.stickyAnchorCalibration.x==60)
--- Later native resize/position noise must not overwrite the trusted correction.
+near(saved.baseX,120); near(saved.baseY,120)
 a.parent.width=120; a.parent.x=60; update(.47)
 a.parent.width=1; update(.48)
-assert(a.stickyAnchorCalibration.x==60)
 a.parent.x=600; a.parent.y=300; overlap=false; update(.5)
-near(a.stickyPlacement.baseX,180); near(a.stickyPlacement.baseY,120)
+assert(a.stickyPlacement==saved and saved.avoidance)
+near(saved.baseX,120); near(saved.baseY,120)
 a.cachedGuid="replacement"; update(.55)
 near(a.stickyPlacement.baseX,120); assert(a.stickyPlacement.order>order)
 -- Combat before calibration settles cannot retain the transient left offset.
@@ -120,8 +119,8 @@ for _,p in ipairs(pack) do
  assert(not state.column and math.abs(state.dx)<=57.6 and state.dy<=96)
  assert(state.displayY<=96.01 and math.abs(state.displayX)<=57.61)
 end
--- Overlap, missing API, or toggling off restores native behaviour.
-overlap=true; update(6); for _,p in ipairs(pack) do assert(not p.stickyPlacement) end
+-- Overlap disables avoidance, not anchoring. Missing API/off restore native.
+overlap=true; update(6); for _,p in ipairs(pack) do assert(p.stickyPlacement and not p.stickyPlacement.avoidance) end
 overlap=false; zAPI=nil; update(6.1); assert(not pack[1].stickyPlacement)
 zAPI=function() end; Z.config.nameplates.sticky_placement="0"
 update(6.2); assert(not pack[1].stickyPlacement)
@@ -196,5 +195,37 @@ rightPlate.px=350; rightPlate.parent.x=350
 for i=0,100 do local t=16+i*.01; update(t); render(leftPlate,t); render(rightPlate,t) end
 assert(#leftPlate.stickyPlacement.neighbors==1)
 assert(leftPlate.stickyPlacement.dx~=rightPlate.stickyPlacement.dx or leftPlate.stickyPlacement.dy~=rightPlate.stickyPlacement.dy)
+-- Friendlies and pets cannot create obstacles for hostile plates, even when
+-- combat settings require both families to use non-overlapping placement.
+visible={}
+local enemy=measured("enemy",350,450)
+local ally=measured("ally",350,450); ally.isFriendly=true
+local pet=measured("playerPet",350,450) -- No reaction data yet.
+local passive=measured("neutral",350,450); passive.isNeutral=true
+UnitExists=function(u) return u=="pet" end
+UnitGUID=function(u) assert(u=="pet"); return "playerPet" end
+-- Hidden/transparent regions must not add a giant invisible collision buffer.
+enemy.raidicon={
+ IsShown=function() return true end,GetAlpha=function() return 0 end,
+ GetLeft=function() return -1000 end,GetRight=function() return 2000 end,
+ GetTop=function() return 1500 end,GetBottom=function() return -1000 end,
+}
+for i=0,100 do
+ local t=18+i*.01; update(t)
+ for _,p in ipairs({enemy,ally,pet,passive}) do render(p,t) end
+end
+local state=enemy.stickyPlacement
+assert(state.collisionFamily=="hostile" and #state.neighbors==0)
+near(state.contentW,80); near(state.contentH,34)
+near(state.displayX,0); near(state.displayY,0)
+assert(pet.stickyPlacement.collisionFamily=="friendly")
+assert(ally.stickyPlacement.collisionFamily=="friendly")
+assert(passive.stickyPlacement.collisionFamily=="friendly")
+-- Actual enemies still separate; a provoked neutral switches family live.
+passive.neutralProvoked=true
+for i=0,100 do local t=20+i*.01; update(t); render(enemy,t); render(passive,t) end
+assert(passive.stickyPlacement.collisionFamily=="hostile")
+assert(#enemy.stickyPlacement.neighbors==1)
+assert(enemy.stickyPlacement.dx~=passive.stickyPlacement.dx or enemy.stickyPlacement.dy~=passive.stickyPlacement.dy)
 ''')
 print("Bounded local placement, hover protection, damping and home-return checks passed")

@@ -14,7 +14,9 @@ parent = {x=100,y=100,height=20}
 function parent:GetCenter() return self.x,self.y end
 function parent:GetHeight() return self.height end
 function parent:GetEffectiveScale() return 1 end
-plate = {parent=parent,cachedGuid="A",scale=1}
+plate = {parent=parent,cachedGuid="A",unit="nameplate1",scale=1}
+UnitExists=function(u) return u=="nameplate1" end
+UnitGUID=function(u) return plate.cachedGuid end
 function plate:GetEffectiveScale() return self.scale end
 function plate:ClearAllPoints() end
 function plate:SetPoint(a,b,c,x,y) self.anchorX=x; self.anchorY=y; self.reference=b; self.referencePoint=c end
@@ -96,6 +98,36 @@ plate.scale=.5; Z.UpdatePlateTransition(plate,2.02)
 near(plate.anchorX*.5,200); near((plate.anchorY-4)*.5,150)
 Z.ApplyStickyPlacement=nil; Z.UpdatePlateTransition(plate,2.03)
 assert(plate.reference==parent and plate.referencePoint=="TOP")
+''')
+lua.execute('zNameplates=Z')
+lua.execute((root / "sticky.lua").read_text(encoding="utf-8-sig"))
+lua.execute('''
+-- Integrate the real projection conversion, solver, and anchoring at 0.9 UI
+-- scale. A native 100px anchor must not be drawn at 90px after conversion.
+reset()
+UIParent.GetEffectiveScale=function() return .9 end
+WorldFrame={GetEffectiveScale=function() return 1 end}
+plate.scale=.9
+Z.config.nameplates.sticky_placement="1"
+function parent:GetWidth() return 160 end
+function parent:SetSize(w,h) self.width=w; self.height=h end
+function parent:EnableMouse(v) self.mouse=v end
+function parent:IsVisible() return true end
+function plate:GetWidth() return 170 end
+function plate:GetHeight() return 23 end
+parent.nameplate=plate
+projection.x=100; projection.y=100
+zAPI=function() return projection.x/1000,projection.y/800,10 end
+local visible={[parent]=parent}
+Z.UpdateStickyPlacements(20,visible,function() return false end)
+Z.UpdatePlateTransition(plate,20)
+near(plate.anchorX*plate.scale,100)
+local previousX,previousY=plate.anchorX,plate.anchorY
+-- Recreating placement after a nameplate toggle cannot compound the scale.
+plate.stickyPlacement=nil; plate.stickyAnchorCalibration=nil; plate.positionTransition=nil
+Z.UpdateStickyPlacements(21,visible,function() return false end)
+Z.UpdatePlateTransition(plate,21)
+near(plate.anchorX,previousX); near(plate.anchorY,previousY)
 ''')
 render = (root / "nameplates.lua").read_text(encoding="utf-8-sig")
 effects = render[render.index("local function ApplyDistanceEffects("):render.index("local function RefreshVisibleNameplatePool(")]

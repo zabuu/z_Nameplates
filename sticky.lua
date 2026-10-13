@@ -29,6 +29,7 @@ local function Measure(plate,ui)
     local function Include(object)
       if not object or not object.GetLeft or not object.GetRight or not object.GetTop or not object.GetBottom
           or (object.IsShown and not object:IsShown()) then return end
+      if (object.IsVisible and not object:IsVisible()) or (object.GetAlpha and object:GetAlpha()==0) then return end
       if object.GetText then local text=object:GetText(); if not text or text=="" then return end end
       local l,r,t,b=object:GetLeft(),object:GetRight(),object:GetTop(),object:GetBottom()
       if not l or not r or not t or not b then return end
@@ -37,6 +38,7 @@ local function Measure(plate,ui)
       -- frame, including the quarter-scale smooth-font surface. Falling back
       -- to the whole plate scale made those boxes four times too large.
       local owner=object.GetParent and object:GetParent()
+      if owner and owner.GetAlpha and owner:GetAlpha()==0 then return end
       local effective=object.GetEffectiveScale and object:GetEffectiveScale()
         or owner and owner.GetEffectiveScale and owner:GetEffectiveScale()
         or plate:GetEffectiveScale()
@@ -82,7 +84,7 @@ end
 
 local function DrawLink(plate,s,uiScale)
   local C=Z.config.nameplates
-  if C.sticky_anchor_link=="0" or not (s.hovered or plate.istarget)
+  if plate.worldPlacementHidden or s.projectionMissing or C.sticky_anchor_link=="0" or not (s.hovered or plate.istarget)
       or s.displayX*s.displayX+s.displayY*s.displayY<24*24
       or not CreateFrame or not plate.GetFrameLevel then HideLink(plate); return end
   local link=plate.layoutAnchorLink
@@ -109,76 +111,56 @@ local function UpdateStickyPlacements(now, visible, shouldOverlap, targetGuid, h
   local C = Z.config.nameplates
   local enabled = C.sticky_placement == "1" and type(zAPI) == "function"
   local ui = UIParent:GetEffectiveScale()
+  local petGuid=UnitExists and UnitGUID and UnitExists("pet") and UnitGUID("pet")
   local count = 0
+  local identities={}
   for parent in pairs(visible) do
     local plate = parent.nameplate
     local identity = plate and (plate.cachedGuid or plate.unit)
     local sx, sy, depth
-    local eligible = enabled and identity and parent:IsVisible() and not plate.clusterHidden
+    local current=plate and Z.IsPlateUnitCurrent(plate,now)
+    local eligible = enabled and current and identity and parent:IsVisible() and not plate.clusterHidden and not identities[identity]
     local allowsOverlap = plate and shouldOverlap(plate)
+    if plate then
+      plate.worldPlacementOwned=enabled
+      plate.worldPlacementHidden=enabled and not current or nil
+      if enabled then Z.ReleasePlateNativeCollision(plate) end
+    end
     if eligible then
       sx, sy, depth = Z.GetPlateProjection(plate, now)
-    end
-    if allowsOverlap then
-      -- Only calibrate from a settled, released hitbox. The native client can
-      -- change its centre while our hitbox shrinks/expands; sampling that frame
-      -- used to save a permanent sideways offset when combat began.
-      if eligible and type(sx)=="number" and sx==sx and type(depth)=="number" and depth>0 and ui>0 then
-        local nativeX,nativeY=parent:GetCenter()
-        local released=parent:GetWidth()<=1.01 and parent:GetHeight()<=1.01
-        local calibration=plate.stickyAnchorCalibration
-        if released and not (calibration and calibration.identity==identity)
-            and nativeX and nativeY and type(sy)=="number" and sy==sy then
-          local scale=plate:GetEffectiveScale()/ui
-          if scale>0 then
-            local x=(nativeX*parent:GetEffectiveScale()/ui-sx*UIParent:GetWidth())/scale
-            local candidate=plate.stickyCalibrationCandidate
-            if not candidate or candidate.identity~=identity or math.abs(candidate.x-x)>.5 then
-              candidate={identity=identity,x=x,since=now}
-              plate.stickyCalibrationCandidate=candidate
-            elseif now-candidate.since>=.05 then
-              plate.stickyAnchorCalibration={identity=identity,x=x,
-                y=((nativeY+parent:GetHeight()*.5)*parent:GetEffectiveScale()/ui-sy*UIParent:GetHeight())/scale}
-              plate.stickyCalibrationCandidate=nil
-            end
-          end
-        else plate.stickyCalibrationCandidate=nil end
-      end
-      eligible=false; sx,sy,depth=nil,nil,nil
-    elseif plate then
-      plate.stickyCalibrationCandidate=nil
     end
     if type(sx) ~= "number" or type(sy) ~= "number" or type(depth) ~= "number"
         or sx~=sx or sy~=sy or depth~=depth or depth <= 0 or ui <= 0 then
       local previous=plate and plate.stickyPlacement
-      -- One missing sample must not flash the client collision layout.
-      -- Never retain a hidden, reclassified or recycled unit's position.
-      if eligible and previous and previous.identity==identity and now-previous.last<=.12 then
-        count=count+1; entries[count]=previous
-      elseif plate then plate.stickyPlacement = nil; HideLink(plate) end
+      -- Keep the same coordinate owner through projection gaps. A stale
+      -- sample is never an obstacle; briefly hold it, then hide, not fallback.
+      if eligible and previous and previous.identity==identity then
+        previous.projectionMissing=true
+        previous.avoidance=false
+        previous.neighbors={}
+        plate.worldPlacementHidden=now-previous.last>.12
+        HideLink(plate)
+      elseif plate then
+        plate.stickyPlacement=nil
+        plate.worldPlacementHidden=enabled and current and not plate.clusterHidden or plate.worldPlacementHidden
+        HideLink(plate)
+      end
     else
-      local nx, ny = parent:GetCenter()
-      if nx and ny then
-        local ps = parent:GetEffectiveScale()/ui
-        nx, ny = nx*ps, (ny+parent:GetHeight()*.5)*ps
+      if eligible then
         sx, sy = sx*UIParent:GetWidth(), sy*UIParent:GetHeight()
         local s = plate.stickyPlacement
-        if not s or s.identity ~= identity or now-s.last > .25
-            or math.abs(sx-s.sx)>160 or math.abs(sy-s.sy)>160 then
+        if not s or s.identity ~= identity then
           sequence = sequence+1
-          local calibration=plate.stickyAnchorCalibration
-          local bias=calibration and calibration.identity==identity and calibration.x or 0
-          local baseY=calibration and calibration.identity==identity and calibration.y
-          s = {identity=identity,order=sequence,biasX=bias,by=baseY and baseY*plate:GetEffectiveScale()/ui or ny-sy,
-            dx=0,dy=0,displayX=0,displayY=0,vx=0,vy=0,depth=depth}
+          s = {identity=identity,order=sequence,biasX=0,by=0,dx=0,dy=0,displayX=0,displayY=0,vx=0,vy=0,depth=depth}
           plate.stickyPlacement = s
+        elseif math.abs(sx-s.sx)>160 or math.abs(sy-s.sy)>160 then
+          -- A real camera/world jump may reset avoidance, never home height.
+          s.dx,s.dy,s.displayX,s.displayY,s.vx,s.vy=0,0,0,0,0,0
         end
-        -- Scale the initial head/slot offset with perspective, not font steps.
-        local perspective = math.max(.25,math.min(4,s.depth/depth))
-        -- Native collision frames can be shoved sideways. Never preserve or
-        -- return to that displacement: centre the column on the world anchor.
-        s.baseX, s.baseY = sx+s.biasX*plate:GetEffectiveScale()/ui, sy+s.by*perspective
-        s.nativeX, s.nativeY = nx, ny
+        s.baseX,s.baseY=sx,sy
+        s.projectionMissing=nil
+        s.avoidance=not allowsOverlap
+        plate.worldPlacementHidden=nil
         s.sx, s.sy, s.last = sx, sy, now
         s.plate = plate
         local scale = plate:GetEffectiveScale()/ui
@@ -191,24 +173,38 @@ local function UpdateStickyPlacements(now, visible, shouldOverlap, targetGuid, h
         s.priority = identity==targetGuid or identity==hoverGuid
         s.hovered=C.sticky_hover_protection~="0" and (plate.layoutHoverReceiver~=nil or
           (plate.layoutHoverUntil and now<plate.layoutHoverUntil)) or false
-        if s.hovered and not s.returningHome then
+        if s.hovered and s.avoidance and not s.returningHome then
           s.dx,s.dy=s.displayX,s.displayY; s.vx,s.vy=0,0
         end
         s.x,s.y = s.baseX+s.dx+s.cx,s.baseY+s.dy+s.cy
         count=count+1; entries[count]=s
-      else
-        local previous=plate.stickyPlacement
-        if previous and previous.identity==identity and now-previous.last<=.12 then
-          count=count+1; entries[count]=previous
-        else plate.stickyPlacement=nil; HideLink(plate) end
+        identities[identity]=true
+      elseif plate then
+        plate.stickyPlacement=nil; HideLink(plate)
       end
+    end
+    if plate and plate.worldPlacementHidden then
+      if plate.EnableMouse and (not plate.IsMouseEnabled or plate:IsMouseEnabled()) then plate:EnableMouse(false) end
+      if Z.ClearPlateMouseover then Z.ClearPlateMouseover(plate) end
+      if plate.layoutHoverReceiver then Z.SetPlateLayoutHover(plate,plate.layoutHoverReceiver,false,true) end
     end
   end
   for i=#entries,count+1,-1 do entries[i]=nil end
-  -- Bound collision work in exceptionally crowded scenes; native smoothing
-  -- remains available. Clustering normally keeps the visible set below this.
+  -- Friendly labels (including pets and passive neutrals) are a separate
+  -- collision scene. Even a friendly fighting our target must not push that
+  -- enemy's plate off its anchor. Update on grace samples as well as fresh ones.
+  for i=1,count do
+    local s=entries[i]
+    local plate=s.plate
+    s.collisionFamily=(plate.isFriendly or (petGuid and s.identity==petGuid)
+      or (plate.isNeutral and not plate.neutralProvoked)) and "friendly" or "hostile"
+  end
+  -- Bound avoidance work without surrendering anchoring to native stacking.
   if count>100 then
-    for i=1,count do entries[i].plate.stickyPlacement=nil; HideLink(entries[i].plate) end
+    for i=1,count do
+      local s=entries[i]; s.avoidance=false; s.dx,s.dy=0,0; s.neighbors={}
+      HideLink(s.plate)
+    end
     return
   end
   if now<nextSolve then return end
@@ -225,7 +221,8 @@ local function UpdateStickyPlacements(now, visible, shouldOverlap, targetGuid, h
     local n=0
     for j=1,count do
       local other=entries[j]
-      if other~=s and math.abs(s.baseX+s.cx-other.x)<(s.w+other.w)*.5+maximum
+      if s.avoidance and other.avoidance and other~=s and other.collisionFamily==s.collisionFamily
+          and math.abs(s.baseX+s.cx-other.x)<(s.w+other.w)*.5+maximum
           and math.abs(s.baseY+s.cy-other.y)<(s.h+other.h)*.5+maximum*2 then
         n=n+1; nearby[n]=other
       end
@@ -244,7 +241,7 @@ local function UpdateStickyPlacements(now, visible, shouldOverlap, targetGuid, h
     -- at a former avoidance slot. Allow a short click grace, then ease home.
     if n==0 then s.homeClearSince=s.homeClearSince or now
     else s.homeClearSince=nil end
-    s.returningHome=s.homeClearSince~=nil and now-s.homeClearSince>=.35
+    s.returningHome=not s.avoidance or (s.homeClearSince~=nil and now-s.homeClearSince>=.35)
     local obstructed=false
     for _,other in ipairs(nearby) do
       if Intersects(s,s.x,s.y,other,-2) then obstructed=true; break end
@@ -307,7 +304,7 @@ function Z.ApplyStickyPlacement(plate,now,nativeX,nativeY,uiScale,plateScale)
   if s.returningHome and s.hovered then speed=speed*.4 end
   local omega=2/duration
   local function Advance(position,velocity,target)
-    if s.hovered and not s.returningHome then return position,0 end
+    if s.hovered and s.avoidance and not s.returningHome then return position,0 end
     local change=position-target
     local temp=(velocity+omega*change)*elapsed
     local decay=math.exp(-omega*elapsed)

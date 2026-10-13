@@ -413,6 +413,8 @@ function Z.GetPlateProjection(plate, now)
     if projection then return projection.x,projection.y,projection.depth end
     return
   end
+  now = now or GetTime()
+  if not Z.IsPlateUnitCurrent(plate,now) then return end
   local identity = plate.cachedGuid or plate.unit
   if not identity or type(zAPI) ~= "function" then return end
   now = now or GetTime()
@@ -428,7 +430,47 @@ function Z.GetPlateProjection(plate, now)
       sample.wx, sample.wy, sample.wz = wx, wy, wz
     end
   end
-  return sample.x, sample.y, sample.depth, sample.wx, sample.wy, sample.wz
+  local x,y=Z.NormalizeWorldProjection(sample.x,sample.y)
+  return x, y, sample.depth, sample.wx, sample.wy, sample.wz
+end
+
+-- A still-visible pooled frame is not evidence that its old unit is current.
+-- Share validation between projection/layout/depth consumers within a frame.
+function Z.IsPlateUnitCurrent(plate,now)
+  if not plate then return false end
+  if plate.isDummy then return true end
+  local unit,guid=plate.unit,plate.cachedGuid
+  if not unit or not guid or not UnitExists or not UnitGUID then return false end
+  now=now or GetTime()
+  local lookup=C_NamePlate and C_NamePlate.GetNamePlateForUnit
+  local sample=plate.unitValidation
+  if not sample or sample.time~=now or sample.unit~=unit or sample.guid~=guid
+      or sample.api~=UnitGUID or sample.exists~=UnitExists or sample.lookup~=lookup or sample.parent~=plate.parent then
+    local current=UnitExists(unit) and UnitGUID(unit)==guid or false
+    if current and lookup then current=lookup(unit)==plate.parent end
+    sample={time=now,unit=unit,guid=guid,api=UnitGUID,exists=UnitExists,lookup=lookup,parent=plate.parent,current=current}
+    plate.unitValidation=sample
+  end
+  return sample.current
+end
+
+function Z.ReleasePlateNativeCollision(plate)
+  if not plate or plate.isDummy or not plate.parent then return end
+  local parent=plate.parent
+  if math.abs(parent:GetWidth()-1)>.01 or math.abs(parent:GetHeight()-1)>.01 then parent:SetSize(1,1) end
+  parent:EnableMouse(false)
+end
+
+-- zAPI projects in the native WorldFrame's coordinate space. UIParent may
+-- use a different UI scale; treating those spaces as identical shifts every
+-- projected anchor toward the screen origin (especially obvious at 0.9 UI).
+function Z.NormalizeWorldProjection(x,y)
+  if type(x)~="number" or type(y)~="number" then return x,y end
+  if not WorldFrame or not WorldFrame.GetEffectiveScale or not UIParent or not UIParent.GetEffectiveScale then return x,y end
+  local ui,world=UIParent:GetEffectiveScale(),WorldFrame:GetEffectiveScale()
+  if not ui or not world or ui<=0 or world<=0 then return x,y end
+  local factor=world/ui
+  return x*factor,y*factor
 end
 
 function Z.GetPlayerWorldPosition(now)
@@ -480,12 +522,27 @@ function Z.UpdatePlateTransition(plate, now)
   end
   local enabled = C.smooth_transitions == "1"
   plate.appearanceAlpha = enabled and math.min(1, math.max(0, (now - state.started) / duration)) or 1
-  local x, y = parent:GetCenter()
-  if not x or not y then return end
   local uiScale = UIParent.GetEffectiveScale and UIParent:GetEffectiveScale() or 1
   local parentScale = parent.GetEffectiveScale and parent:GetEffectiveScale() or 1
   local plateScale = plate.GetEffectiveScale and plate:GetEffectiveScale() or 1
   if uiScale <= 0 or plateScale <= 0 then return end
+  if plate.worldPlacementOwned then
+    -- World-owned plates must never accumulate native stacking compensation
+    -- or depend on a native GetCenter sample, including during projection gaps.
+    state.last=now; state.offsetX,state.offsetY=0,0
+    state.x,state.y,state.px,state.py=nil,nil,nil,nil
+    local ox,oy=Z.ApplyStickyPlacement(plate,now,nil,nil,uiScale,plateScale)
+    if not ox then return end
+    oy=oy+(tonumber(C.vertical_offset) or 0)
+    if state.appliedReference~=UIParent or not state.appliedX or math.abs(ox-state.appliedX)>.001
+        or math.abs(oy-state.appliedY)>.001 then
+      plate:ClearAllPoints(); plate:SetPoint("TOP",UIParent,"BOTTOMLEFT",ox,oy)
+      state.appliedReference=UIParent; state.appliedX,state.appliedY=ox,oy
+    end
+    return
+  end
+  local x, y = parent:GetCenter()
+  if not x or not y then return end
   x, y = x * parentScale / uiScale,
     (y + parent:GetHeight() * .5) * parentScale / uiScale
   local px, py

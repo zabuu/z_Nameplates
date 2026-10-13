@@ -8,6 +8,8 @@ helper = source[source.index("function Z.GetPlateProjection("):source.index("fun
 lua = LuaRuntime(unpack_returned_tuples=True)
 lua.execute('''
 Z={}; projectionCalls=0; playerCalls=0
+UnitExists=function(u) return u~=nil end
+UnitGUID=function(u) return u end
 zAPI=function(command,unit)
   if command=="projectUnit" then
     projectionCalls=projectionCalls+1
@@ -23,7 +25,7 @@ lua.execute(helper)
 lua.execute('''
 plates={}
 for i=1,50 do
-  plates[i]={cachedGuid=tostring(i)}
+  plates[i]={cachedGuid=tostring(i),unit=tostring(i)}
   local x,y,d=Z.GetPlateProjection(plates[i],1)
   assert(x==.5 and y==.6 and d==20)
   Z.GetPlateProjection(plates[i],1) -- Another consumer in the same frame.
@@ -33,9 +35,10 @@ end
 assert(projectionCalls==50 and playerCalls==1)
 for i=1,50 do Z.GetPlateProjection(plates[i],1.01); Z.GetPlayerWorldPosition(1.01) end
 assert(projectionCalls==100 and playerCalls==2)
-plates[1].cachedGuid="new"; Z.GetPlateProjection(plates[1],1.01)
+plates[1].cachedGuid="new"; plates[1].unit="new"; Z.GetPlateProjection(plates[1],1.01)
 assert(projectionCalls==101) -- Identity changes invalidate immediately.
 plates[1].cachedGuid="bad"
+plates[1].unit="bad"
 assert(Z.GetPlateProjection(plates[1],1.01)==nil)
 assert(Z.GetPlateProjection(plates[1],1.01)==nil)
 assert(projectionCalls==102) -- Failed reads are cached, not retried by each consumer.
@@ -46,6 +49,19 @@ assert(projectionCalls==103 and playerCalls==3) -- Replaced API invalidates.
 local dx,dy,dd=Z.GetPlateProjection({isDummy=true,dummyProjection={x=.2,y=.3,depth=25}},2)
 assert(dx==.2 and dy==.3 and dd==25 and projectionCalls==103)
 assert(Z.GetPlateProjection({isDummy=true},2)==nil and projectionCalls==103)
+-- WorldFrame projection coordinates must be converted to the UI's scale.
+-- Changing UI scale updates conversion even when the native sample is cached.
+UIParent={GetEffectiveScale=function() return .9 end}
+WorldFrame={GetEffectiveScale=function() return 1 end}
+local x,y,depth,wx,wy,wz=Z.GetPlateProjection(plates[2],1.01)
+assert(math.abs(x-.5/.9)<.000001 and math.abs(y-.6/.9)<.000001)
+assert(depth==20 and wx==1 and wy==2 and wz==3 and projectionCalls==103)
+UIParent.GetEffectiveScale=function() return .8 end
+x,y=Z.GetPlateProjection(plates[2],1.01)
+assert(x==.625 and y==.75 and projectionCalls==103)
+local dx,dy=Z.GetPlateProjection({isDummy=true,dummyProjection={x=.2,y=.3,depth=25}},2)
+assert(dx==.2 and dy==.3) -- Dummy samples are already in UI space.
+UIParent=nil; WorldFrame=nil
 
 assert(Z.ShouldUpdatePlateDepth(0,50,false))
 assert(not Z.ShouldUpdatePlateDepth(.01,50,false))
@@ -69,6 +85,8 @@ frameState={now=0}; visiblePlates={}; visiblePlateCount=0
 depthPlates={}; DEPTH_STRATAS={"BACKGROUND","LOW","MEDIUM","HIGH","DIALOG"}
 table.wipe=function(t) for k in pairs(t) do t[k]=nil end end
 testPlate={nameplate={},IsVisible=function() return true end}
+testPlate.nameplate.parent=testPlate
+zNameplates=Z
 C_NamePlate={GetNamePlateForUnit=function(unit)
   scanCalls=scanCalls+1
   if unit=="nameplate1" then return testPlate end
@@ -80,11 +98,11 @@ SetPlateDepthLayer=function() layerCalls=layerCalls+1 end
 ''')
 lua.execute(depth_helper + '''
 UpdateNameplateDepthLayers()
-assert(scanCalls==1 and visiblePlateCount==1 and layerCalls==1)
+assert(scanCalls==2 and visiblePlateCount==1 and layerCalls==1)
 assert(testPlate.nameplate.cachedGuid=="test-guid")
 frameState.now=.1; UpdateNameplateDepthLayers()
-assert(scanCalls==1 and layerCalls==2)
+assert(scanCalls==3 and layerCalls==2)
 frameState.now=.5; UpdateNameplateDepthLayers()
-assert(scanCalls==2 and visiblePlateCount==1 and layerCalls==3)
+assert(scanCalls==5 and visiblePlateCount==1 and layerCalls==3)
 ''')
 print("Actual depth recovery routine passed with no global nameplates frame.")

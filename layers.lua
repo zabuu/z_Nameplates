@@ -110,11 +110,14 @@ SlashCmdList.ZNPDUMP = function()
       .." calibration X="..tostring(placement.biasX)
       .." displacement="..tostring(placement.displayX)..","..tostring(placement.displayY))
     Say("layout hover="..tostring(placement.hovered).." neighbors="..tostring(placement.neighbors and #placement.neighbors or 0)
-      .." returning home="..tostring(placement.returningHome))
+      .." returning home="..tostring(placement.returningHome).." family="..tostring(placement.collisionFamily))
+    Say("world owner="..tostring(plate.worldPlacementOwned).." hidden="..tostring(plate.worldPlacementHidden)
+      .." missing projection="..tostring(placement.projectionMissing).." avoidance="..tostring(placement.avoidance))
   end
   -- Sizes/layers alone cannot distinguish an off-centre native frame from
   -- an overlay offset. Report comparable screen coordinates on demand only.
   local ui=UIParent:GetEffectiveScale()
+  Say("coordinate scales: UI="..tostring(ui).." world="..tostring(WorldFrame and WorldFrame.GetEffectiveScale and WorldFrame:GetEffectiveScale()))
   local function Center(label,object)
     if not object or not object.GetCenter or ui<=0 then return end
     local owner=object.GetParent and object:GetParent()

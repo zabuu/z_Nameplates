@@ -342,6 +342,7 @@ local function UpdateCameraAnchor(self, elapsed)
   local ok, x, y, depth = pcall(zAPI, "worldToScreen", self.worldX, self.worldY, self.worldZ)
   if ok and type(x) == "number" and type(y) == "number"
       and type(depth) == "number" and depth > 0 then
+    x,y=Z.NormalizeWorldProjection(x,y)
     local parentWidth, parentHeight = UIParent:GetWidth(), UIParent:GetHeight()
     local clusterScale = math.max(.35, math.min(2, (self.worldReferenceDepth or 25) / depth))
     self:SetAlpha(1)
@@ -361,6 +362,7 @@ local function UpdateCameraAnchor(self, elapsed)
         self.worldY + (base.worldOffsetY or 0), self.worldZ)
       if plateOk and type(plateX) == "number" and type(plateY) == "number"
           and type(plateDepth) == "number" and plateDepth > 0 then
+        plateX,plateY=Z.NormalizeWorldProjection(plateX,plateY)
         base:ClearAllPoints()
         base:SetPoint("CENTER", self.origin, "CENTER",
           (plateX - x) * parentWidth / clusterScale,
@@ -385,7 +387,7 @@ local function UpdateCameraAnchor(self, elapsed)
       Z.UpdateStickyPlacements(now,self.layoutVisible,function(plate) return plate.overlapEnabled end,nil,nil,self.layoutScene)
       for base in pairs(self.layoutVisible) do
         Z.UpdatePlateTransition(base.nameplate,now)
-        base.nameplate:SetAlpha(base.nameplate.appearanceAlpha or 1)
+        base.nameplate:SetAlpha(base.nameplate.worldPlacementHidden and 0 or base.nameplate.appearanceAlpha or 1)
       end
     end
   else

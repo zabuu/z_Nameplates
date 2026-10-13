@@ -5,6 +5,8 @@ import runpy
 root=Path(__file__).resolve().parents[1]
 runtime=runpy.run_path(str(root / "tests/test_settings_ui.py"))
 lua=runtime["lua"]
+core=(root / "core.lua").read_text(encoding="utf-8-sig")
+lua.execute('local Z=zNameplates\n'+core[core.index("function Z.NormalizeWorldProjection("):core.index("function Z.GetPlayerWorldPosition(")])
 lua.execute('''
 local methods=getmetatable(UIParent).__index
 function methods:SetSize(w,h) self.width=w; self.height=h end
