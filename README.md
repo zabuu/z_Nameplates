@@ -147,6 +147,13 @@ that frame, and the player's world position is read once rather than per plate.
 Pool recovery scans run twice a second; normal lifecycle events remain immediate.
 The anti-flash guard checks opacity without rewriting already-invisible regions.
 
+Routine half-second data refreshes are phased across ten small batches; health,
+aura and target events still refresh immediately and never run the same full
+data pass twice in one tick. LOS checks retain a 100 ms cadence but use eight
+phases to avoid a synchronized raycast spike. Shared player-combat state,
+unchanged fonts, layer repair and cluster range geometry avoid redundant work.
+These phases do not stagger camera projection, distance scaling or depth order.
+
 Above the configured threshold (30 visible plates by default), crowd clustering combines attackable NPCs with the
 same name, level, tag ownership, and health band. Crowds settings include a
 toggle and a 10–20% health-band slider (20% default). A cluster displays, for

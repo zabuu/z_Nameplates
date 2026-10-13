@@ -326,6 +326,8 @@ end
 function Z.SetSmoothFontString(text, font, size, flags)
   if not text or not font then return end
   size = math.max(1, tonumber(size) or 12)
+  flags = flags or ""
+  local factor = 1
   if text.GetParent and text.SetParent and text.GetPoint then
     if not text.zSmoothFrame then
       local parent = text:GetParent()
@@ -350,13 +352,16 @@ function Z.SetSmoothFontString(text, font, size, flags)
       text:ClearAllPoints()
       for _, point in ipairs(points) do text:SetPoint(unpack(point)) end
     end
-    text:SetFont(font, size * 4, flags or "")
+    factor = 4
   elseif text.SetTextHeight then
-    text:SetFont(font, size * 2, flags or "")
-    text:SetTextHeight(size)
-  else
-    text:SetFont(font, size, flags or "")
+    factor = 2
   end
+  local currentFont, currentSize, currentFlags
+  if text.GetFont then currentFont, currentSize, currentFlags = text:GetFont() end
+  if currentFont ~= font or currentSize ~= size*factor or (currentFlags or "") ~= flags then
+    text:SetFont(font, size*factor, flags)
+  end
+  if factor == 2 and text.zSmoothTextHeight ~= size then text:SetTextHeight(size); text.zSmoothTextHeight = size end
 end
 
 function Z.ShouldUseCombatNameColor(plate, enabled)
@@ -472,7 +477,7 @@ function Z.ReleasePlateNativeCollision(plate)
   if not plate or plate.isDummy or not plate.parent then return end
   local parent=plate.parent
   if math.abs(parent:GetWidth()-1)>.01 or math.abs(parent:GetHeight()-1)>.01 then parent:SetSize(1,1) end
-  parent:EnableMouse(false)
+  if not parent.IsMouseEnabled or parent:IsMouseEnabled() then parent:EnableMouse(false) end
 end
 
 -- zAPI projects in the native WorldFrame's coordinate space. UIParent may
@@ -499,6 +504,27 @@ function Z.GetPlayerWorldPosition(now)
     if ok then sample.x, sample.y, sample.z = x, y, z end
   end
   return sample.x, sample.y, sample.z
+end
+
+function Z.GetPlayerCombatState(now)
+  now = now or GetTime()
+  if Z.playerCombatTime ~= now or Z.playerCombatAPI ~= UnitAffectingCombat then
+    Z.playerCombatTime, Z.playerCombatAPI = now, UnitAffectingCombat
+    Z.playerCombatValue = UnitAffectingCombat("player")
+  end
+  return Z.playerCombatValue
+end
+
+function Z.NextPlateDataRefresh(plate, now)
+  local identity = plate.cachedGuid or plate.unit
+  if plate.dataRefreshIdentity ~= identity or not plate.dataRefreshPhase then
+    plate.dataRefreshIdentity = identity
+    plate.dataRefreshPhase = ((tonumber(string.sub(tostring(identity or ""),-4),16) or 0)%10)*.05
+  end
+  local phase = plate.dataRefreshPhase
+  -- Phase only the routine half-second data refresh, never camera movement,
+  -- health/aura events, targeting, or the dedicated castbar animation.
+  return (math.floor((now-phase)/.5+.000001)+1)*.5+phase
 end
 
 function Z.ShouldUpdatePlateDepth(now, count, dirty)

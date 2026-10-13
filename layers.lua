@@ -16,9 +16,13 @@ local function FontSurface(text, strata, level)
   if text and text.zSmoothFrame then Layer(text.zSmoothFrame, strata, level) end
 end
 
-function Z.RepairPlateTextLayers(plate)
+function Z.RepairPlateTextLayers(plate, now)
   if not plate.health then return end
   local strata, level = plate.health:GetFrameStrata(), plate.health:GetFrameLevel()
+  if now and plate.textLayerRepairAt and now < plate.textLayerRepairAt
+      and plate.textLayerRepairStrata == strata and plate.textLayerRepairLevel == level then return end
+  if now then plate.textLayerRepairAt = now+.1 end
+  plate.textLayerRepairStrata, plate.textLayerRepairLevel = strata, level
   local backdrop = plate.health.backdrop
   if backdrop then Layer(backdrop, strata, math.max(0, level - 1)) end
   if plate.textframe then

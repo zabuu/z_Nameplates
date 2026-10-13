@@ -166,7 +166,7 @@ local function UpdateStickyPlacements(now, visible, shouldOverlap, targetGuid, h
         local scale = plate:GetEffectiveScale()/ui
         local bufferX=math.max(0,math.min(40,tonumber(C.collision_buffer_x) or 0))
         local bufferY=math.max(0,math.min(40,tonumber(C.collision_buffer_y) or 0))
-        if not s.contentW or now>=nextSolve then
+        if not s.contentW or (s.avoidance and now>=nextSolve) then
           s.contentW,s.contentH,s.cx,s.cy=Measure(plate,ui)
         end
         s.w,s.h=s.contentW+bufferX*2*scale,s.contentH+bufferY*2*scale

@@ -37,12 +37,23 @@ local function RangeFill(plate,group)
   local width,height=bar:GetWidth(),bar:GetHeight()
   local minimum,maximum=group.minimum/100,group.maximum/100
   local fill=bar.GetStatusBarTexture and bar:GetStatusBarTexture()
-  texture:SetTexture(fill and fill.GetTexture and fill:GetTexture() or "Interface\\TargetingFrame\\UI-StatusBar")
+  local path=fill and fill.GetTexture and fill:GetTexture() or "Interface\\TargetingFrame\\UI-StatusBar"
   local r,g,b=1,0,0
   if bar.GetStatusBarColor then r,g,b=bar:GetStatusBarColor() end
-  texture:SetVertexColor(r,g,b,tonumber(Z.config.nameplates.cluster_range_opacity) or .4)
+  local opacity=tonumber(Z.config.nameplates.cluster_range_opacity) or .4
+  local vertical=Z.config.nameplates.verticalhealth=="1"
+  local cache=plate.clusterRangeCache
+  local shown=maximum>minimum
+  if cache and cache.width==width and cache.height==height and cache.minimum==minimum and cache.maximum==maximum
+      and cache.path==path and cache.r==r and cache.g==g and cache.b==b and cache.opacity==opacity and cache.vertical==vertical
+      and (not texture.IsShown or (texture:IsShown() and true or false)==shown) then return end
+  cache=cache or {}; plate.clusterRangeCache=cache
+  cache.width,cache.height,cache.minimum,cache.maximum=width,height,minimum,maximum
+  cache.path,cache.r,cache.g,cache.b,cache.opacity,cache.vertical=path,r,g,b,opacity,vertical
+  texture:SetTexture(path)
+  texture:SetVertexColor(r,g,b,opacity)
   texture:ClearAllPoints()
-  if Z.config.nameplates.verticalhealth=="1" then
+  if vertical then
     texture:SetPoint("BOTTOMLEFT",bar,"BOTTOMLEFT",0,height*minimum)
     texture:SetWidth(width); texture:SetHeight(math.max(.001,height*(maximum-minimum)))
   else
@@ -87,12 +98,15 @@ function Z.RenderPlateCluster(plate)
   end
   local uiScale = UIParent:GetEffectiveScale()
   local parentScale = plate.parent:GetEffectiveScale()
-  badge:SetScale(uiScale / math.max(.001, parentScale))
-  badge:SetFrameStrata(plate:GetFrameStrata())
-  badge:SetFrameLevel(plate:GetFrameLevel() + 9)
+  local scale=uiScale / math.max(.001, parentScale)
+  if not badge.GetScale or badge:GetScale()~=scale then badge:SetScale(scale) end
+  if badge:GetFrameStrata()~=plate:GetFrameStrata() then badge:SetFrameStrata(plate:GetFrameStrata()) end
+  if badge:GetFrameLevel()~=plate:GetFrameLevel()+9 then badge:SetFrameLevel(plate:GetFrameLevel()+9) end
   badge:Show()
   plate.health:Show()
-  plate.health:SetMinMaxValues(0,100)
+  local rangeMin,rangeMax
+  if plate.health.GetMinMaxValues then rangeMin,rangeMax=plate.health:GetMinMaxValues() end
+  if rangeMin~=0 or rangeMax~=100 then plate.health:SetMinMaxValues(0,100) end
   RangeFill(plate,group)
   -- Data updates can rewrite the representative's HP without changing groups.
   if not plate.health.GetValue or plate.health:GetValue()~=group.minimum then plate.health:SetValue(group.minimum) end

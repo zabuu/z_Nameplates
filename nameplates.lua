@@ -330,7 +330,10 @@ function zNameplates.StartNameplates()
   end
 
   local function IsCombatWithPlayer(plate)
-    if not UnitAffectingCombat("player") then return nil end
+    local playerCombat
+    if zNameplates.GetPlayerCombatState then playerCombat = zNameplates.GetPlayerCombatState()
+    else playerCombat = UnitAffectingCombat("player") end
+    if not playerCombat then return nil end
     local token = plate and plate.unit
     if not token or not UnitExists(token) or UnitCanAssist("player", token) or not UnitAffectingCombat(token) then return nil end
     local threat = UnitThreatSituation and UnitThreatSituation("player", token)
@@ -740,7 +743,7 @@ function zNameplates.StartNameplates()
   end
 
   local function ApplyDistanceEffects(plate, now, baseAlpha)
-    zNameplates.RepairPlateTextLayers(plate)
+    zNameplates.RepairPlateTextLayers(plate, now)
     local baseScale = UIParent:GetScale()
     now = now or GetTime()
     local identity = plate.cachedGuid or plate.unit
@@ -753,6 +756,7 @@ function zNameplates.StartNameplates()
       plate.distanceAlpha = nil
       plate.losAlpha = nil
       plate.losNextSample = nil
+      plate.losSamplePhase = ((tonumber(string.sub(tostring(identity or ""),-4),16) or 0)%8)*.0125
       plate.losOutOfSight = nil
     end
 
@@ -804,7 +808,9 @@ function zNameplates.StartNameplates()
       if not plate.losNextSample or now >= plate.losNextSample then
         local found, inSight = pcall(UnitXP, "inSight", "player", plate.unit)
         plate.losOutOfSight = found and inSight == false or nil
-        plate.losNextSample = now + .1
+        local phase = plate.losSamplePhase or 0
+        -- Keep 10 Hz LOS accuracy, but spread expensive raycasts across ticks.
+        plate.losNextSample = (math.floor((now-phase)/.1+.000001)+1)*.1+phase
       end
     else
       plate.losOutOfSight = nil
@@ -824,7 +830,10 @@ function zNameplates.StartNameplates()
     local desiredAlpha = math.max(0, math.min(1,
       (baseAlpha or 1) * visualAlpha * (plate.appearanceAlpha or 1)))
     if plate.worldPlacementHidden then desiredAlpha=0 end
-    if plate.clusterCountFrame then plate.clusterCountFrame:SetAlpha(plate.worldPlacementHidden and 0 or 1) end
+    if plate.clusterCountFrame then
+      local alpha = plate.worldPlacementHidden and 0 or 1
+      if plate.clusterCountFrame:GetAlpha() ~= alpha then plate.clusterCountFrame:SetAlpha(alpha) end
+    end
     if not plate.cachedAlpha or abs(plate.cachedAlpha - desiredAlpha) > .0005 then
       plate:SetAlpha(desiredAlpha)
       plate.cachedAlpha = desiredAlpha
@@ -2396,8 +2405,10 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     local mouseover = nameplate.cachedGuid and nameplate.cachedGuid == frameState.mouseoverGuid or nil
 
     -- trigger queued event update
+    local dataUpdated
     if hasEventUpdate then
       nameplates:OnDataChanged(nameplate)
+      dataUpdated = true
       nameplate.eventcache = nil
       nameplate.auraUpdate = nil
       nameplate.castUpdate = nil
@@ -2511,10 +2522,10 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     end
 
     -- run full updates if required
-    if update then
+    if update and not dataUpdated then
       nameplates:OnDataChanged(nameplate)
-      nameplate.tick = now + .5
     end
+    if update or dataUpdated then nameplate.tick = zNameplates.NextPlateDataRefresh(nameplate,now) end
 
     -- Zoom animation
     if target and cfg.targetzoom then
