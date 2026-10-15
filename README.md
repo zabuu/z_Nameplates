@@ -147,12 +147,56 @@ that frame, and the player's world position is read once rather than per plate.
 Pool recovery scans run twice a second; normal lifecycle events remain immediate.
 The anti-flash guard checks opacity without rewriting already-invisible regions.
 
+Depth-layer slots follow relative front-to-back order, not absolute distance
+bands. Camera movement that preserves that order no longer re-layers whole
+plate trees. Removing plates preserves surviving slots; new plates use free
+gaps, and depth crossings exchange slots locally. Screen-overlap promotion and
+target priority remain active within the existing bounded layer range.
+Render-rate movement updates the existing anchor rather than clearing all its
+points first; identity/reference changes still reset it. Settled avoidance
+offsets skip spring integration and closure allocation. LOS unit-existence
+validation follows the phased 10 Hz raycasts, not every rendered frame.
+World-owned projection gaps retain their last depth during the short visibility
+grace instead of chaining legacy native projection/position fallbacks.
+
 Routine half-second data refreshes are phased across ten small batches; health,
 aura and target events still refresh immediately and never run the same full
 data pass twice in one tick. LOS checks retain a 100 ms cadence but use eight
 phases to avoid a synchronized raycast spike. Shared player-combat state,
 unchanged fonts, layer repair and cluster range geometry avoid redundant work.
-These phases do not stagger camera projection, distance scaling or depth order.
+Camera projection, distance animation and depth ordering remain synchronized.
+
+Town/crowd updates exclude overlap-allowed labels from the avoidance solver
+entirely, while retaining their render-rate world anchors. A mixed scene solves
+only the plates that actually need collision avoidance; friendly/hostile families
+remain separate. Distance reads use phased 20 Hz floating-point samples, while
+whole-plate scale and opacity still interpolate every rendered frame. Unit/API
+changes invalidate samples immediately, including failed reads.
+
+Unchanged depth layers use a small root check instead of walking all aura,
+cooldown and icon frames. New aura/config changes request an immediate repair;
+root/strata changes repair immediately, text drift retains its fast guard, and
+phased half-second full audits catch unexpected child-only modifications.
+Per-frame unit validation reuses each plate's record instead of allocating a new
+table every frame; identity checks and recycled-frame safety are unchanged.
+No character settings, visibility rules, nameplate range, or DLL are changed.
+
+Interface click protection uses the client's constant-time top mouse focus,
+not a full UI-frame scan every rendered frame. Only ambiguous plate hovers
+inspect the underlying frame stack, at most 10 Hz while the focus is unchanged.
+Mouse enter, clicks, and right-click actions validate immediately so interface
+windows still take precedence. Blocked plates do not repeatedly re-enable their
+mouse receiver, and owned mouseovers are cleared. With a known unit GUID,
+only the actual target uses the target refresh rate; opaque bystanders no
+longer take the target fast path.
+
+With the optional OctoPerf recorder, `/octoperf on` also records narrow zNP
+operation spans: native projection/layout, depth/layers, visual/data work,
+distance samples, placement/scale writes, LOS, opacity, interface input guards,
+and full data refreshes.
+The spans are inclusive (do not add them to callback totals), and are inactive
+outside a recording. A short stationary town capture followed by
+`/octoperf off` and `/reload` saves the breakdown without changing any settings.
 
 Above the configured threshold (30 visible plates by default), crowd clustering combines attackable NPCs with the
 same name, level, tag ownership, and health band. Crowds settings include a

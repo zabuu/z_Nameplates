@@ -391,6 +391,24 @@ function zNameplates.StartNameplates()
     end
   end
 
+  local function SampleExactUnitDistance(plate, now)
+    local unit,identity=plate.unit,plate.cachedGuid or plate.unit
+    local sample=plate.distanceSample
+    if not sample then sample={}; plate.distanceSample=sample end
+    if sample.identity~=identity or sample.unit~=unit or sample.api~=zAPI or sample.unitxp~=UnitXP
+        or sample.position~=UnitPosition or sample.squared~=UnitDistanceSquared
+        or not sample.nextAt or now>=sample.nextAt then
+      sample.identity,sample.unit,sample.api,sample.unitxp=identity,unit,zAPI,UnitXP
+      sample.position,sample.squared=UnitPosition,UnitDistanceSquared
+      sample.value=ExactUnitDistance(unit,now)
+      local phase=((tonumber(string.sub(tostring(identity or ""),-4),16) or 0)%10)*.005
+      -- World distance does not depend on camera rotation. Sample at 20 Hz,
+      -- phase crowded scenes, and interpolate scale/opacity every render frame.
+      sample.nextAt=(math.floor((now-phase)/.05+.000001)+1)*.05+phase
+    end
+    return sample.value
+  end
+
   local function GetUnitDepth(nameplate)
     if not nameplate then return 40 end
     local guid = nameplate.cachedGuid
@@ -418,6 +436,10 @@ function zNameplates.StartNameplates()
       if type(depth) == "number" and depth > 0 then
         return depth
       end
+      -- A world-owned projection gap is not a legacy-client failure. Hold
+      -- its last depth through the short visibility grace instead of issuing
+      -- a chain of native position/projection fallbacks for an off-camera unit.
+      if nameplate.worldPlacementOwned then return nameplate.depth or 40 end
     end
 
     -- 2. Native zAPI worldToScreen from unitPosition
@@ -469,7 +491,7 @@ function zNameplates.StartNameplates()
 
   local function SetPlateDepthLayer(nameplate, strata, baseLevel)
     if not nameplate then return end
-    zNameplates.ApplyPlateLayers(nameplate, strata, baseLevel)
+    zNameplates.ApplyPlateLayers(nameplate, strata, baseLevel, frameState.now)
   end
 
   local function UpdateNameplateDepthLayers()
@@ -513,8 +535,8 @@ function zNameplates.StartNameplates()
 
     if count == 1 then
       local np = depthPlates[1].nameplate
-      local d = np.depth or 20
-      local rank = math.max(1, math.min(100, math.floor(101 - d * 2.5)))
+      plateRank=zNameplates.AssignStablePlateDepthRanks(depthPlates,count,plateRank)
+      local rank=plateRank[1]
       local sIdx = math.min(5, math.floor((rank - 1) / 20) + 1)
       local sName = DEPTH_STRATAS[sIdx] or "LOW"
       local bLvl = math.floor(2 + (rank - 1) * 0.9)
@@ -546,7 +568,7 @@ function zNameplates.StartNameplates()
     table.wipe(plateTop)
     table.wipe(plateBottom)
     table.wipe(plateStrata)
-    table.wipe(plateRank)
+    plateRank=zNameplates.AssignStablePlateDepthRanks(depthPlates,count,plateRank)
 
     for i = 1, count do
       local p = depthPlates[i]
@@ -559,19 +581,6 @@ function zNameplates.StartNameplates()
       plateRight[i] = r
       plateTop[i] = t
       plateBottom[i] = b
-
-      -- Configure 1-100 distinct rendering rank based on depth
-      -- depth = 0 yards -> rank 100 (closest, highest priority)
-      -- depth = 40 yards -> rank 1 (furthest, lowest priority)
-      local d = np.depth or 40
-      plateRank[i] = math.max(1, math.min(100, math.floor(101 - d * 2.5)))
-    end
-
-    -- Ensure strictly monotonic ranks for sorted plates (closer plate >= further plate)
-    for i = 2, count do
-      if plateRank[i] <= plateRank[i - 1] then
-        plateRank[i] = math.min(100, plateRank[i - 1] + 1)
-      end
     end
 
     -- Map 100 ranks across the 5 discrete rendering stratas (20 ranks per strata)
@@ -743,7 +752,10 @@ function zNameplates.StartNameplates()
   end
 
   local function ApplyDistanceEffects(plate, now, baseAlpha)
+    local cost,generation
+    if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
     zNameplates.RepairPlateTextLayers(plate, now)
+    if cost then zNameplates.EndPlateCost("zNP text layer guard",cost,generation) end
     local baseScale = UIParent:GetScale()
     now = now or GetTime()
     local identity = plate.cachedGuid or plate.unit
@@ -753,6 +765,7 @@ function zNameplates.StartNameplates()
       plate.distanceTargetScale = nil
       plate.distanceProgress = nil
       plate.distanceVisualTime = nil
+      plate.distanceSample = nil
       plate.distanceAlpha = nil
       plate.losAlpha = nil
       plate.losNextSample = nil
@@ -765,10 +778,11 @@ function zNameplates.StartNameplates()
     local blend = elapsed and 1 - math.exp(-elapsed * 10) or 1
     plate.distanceVisualTime = now
 
+    if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
     if cfg.distance_scale or cfg.distance_alpha then
-      -- Re-sample the floating-point position every rendered frame. SetScale
-      -- applies to the complete plate, including its text and child elements.
-      local distance = ExactUnitDistance(plate.unit, now)
+      -- Sample exact floating-point distance less often than the render rate;
+      -- SetScale still animates the complete plate continuously, including text.
+      local distance = SampleExactUnitDistance(plate, now)
       if distance then
         plate.distanceProgress = math.max(0,
           math.min(1, (distance - 8) / (cfg.distance_max_range - 8)))
@@ -776,7 +790,9 @@ function zNameplates.StartNameplates()
     else
       plate.distanceProgress = 0
     end
+    if cost then zNameplates.EndPlateCost("zNP distance sampling",cost,generation) end
 
+    if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
     local progress = plate.distanceProgress or 0
     local targetScale = baseScale
     if cfg.distance_scale then
@@ -796,6 +812,7 @@ function zNameplates.StartNameplates()
     -- Use the final scale: scaling after a screen-relative anchor can magnify
     -- its coordinates and cause a one-frame flyaway.
     zNameplates.UpdatePlateTransition(plate, now)
+    if cost then zNameplates.EndPlateCost("zNP placement and scale writes",cost,generation) end
 
     local targetDistanceAlpha = cfg.distance_alpha
       and 1 - (1 - cfg.distance_min_alpha) * progress or 1
@@ -804,9 +821,13 @@ function zNameplates.StartNameplates()
     if abs(targetDistanceAlpha - distanceAlpha) < .0001 then distanceAlpha = targetDistanceAlpha end
     plate.distanceAlpha = distanceAlpha
 
-    if cfg.los_fade and cfg.distance_unitxp and plate.unit and UnitExists(plate.unit) then
+    if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
+    if cfg.los_fade and cfg.distance_unitxp and plate.unit then
       if not plate.losNextSample or now >= plate.losNextSample then
-        local found, inSight = pcall(UnitXP, "inSight", "player", plate.unit)
+        -- Validation belongs to the 10 Hz raycast, not every rendered frame.
+        -- Lifecycle/identity changes already reset this sample immediately.
+        local found,inSight
+        if UnitExists(plate.unit) then found,inSight=pcall(UnitXP,"inSight","player",plate.unit) end
         plate.losOutOfSight = found and inSight == false or nil
         local phase = plate.losSamplePhase or 0
         -- Keep 10 Hz LOS accuracy, but spread expensive raycasts across ticks.
@@ -816,8 +837,12 @@ function zNameplates.StartNameplates()
       plate.losOutOfSight = nil
       plate.losNextSample = nil
     end
+    if cost then zNameplates.EndPlateCost("zNP LOS raycasts",cost,generation) end
+    if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
     SetLineOfSightDesaturation(plate, plate.losOutOfSight)
+    if cost then zNameplates.EndPlateCost("zNP LOS colour updates",cost,generation) end
 
+    if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
     local targetLosAlpha = plate.losOutOfSight and cfg.distance_min_alpha or 1
     local losAlpha = plate.losAlpha or 1
     losAlpha = losAlpha + (targetLosAlpha - losAlpha) * blend
@@ -838,6 +863,7 @@ function zNameplates.StartNameplates()
       plate:SetAlpha(desiredAlpha)
       plate.cachedAlpha = desiredAlpha
     end
+    if cost then zNameplates.EndPlateCost("zNP opacity writes",cost,generation) end
   end
 
   local function RefreshVisibleNameplatePool()
@@ -1044,6 +1070,7 @@ function zNameplates.StartNameplates()
   end
 
   local function CreateDebuffIcon(plate, index)
+    plate.layersDirty = true
     local baseLevel = plate.cachedBaseLevel or 4
     plate.debuffs[index] = CreateFrame("Frame", plate.platename.."Debuff"..index, plate)
     plate.debuffs[index]:Hide()
@@ -1084,6 +1111,7 @@ function zNameplates.StartNameplates()
 
   local function UpdateDebuffConfig(nameplate, i)
     if not nameplate.debuffs[i] then return end
+    nameplate.layersDirty = true
 
     -- update debuff positions
     local width = tonumber(C.nameplates.width)
@@ -1452,14 +1480,26 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
 
   nameplates:SetScript("OnUpdate", function()
     local now = GetTime()
+    local profileStart,profileGeneration
+    if OctoPerf and OctoPerf.BeginOperation and OctoPerf.EndOperation then
+      profileStart,profileGeneration=OctoPerf.BeginOperation()
+    end
+    zNameplates.platePerfActive=profileStart~=nil
+    local cost,generation
     if (this.frameTick or 0) + .01 > now and not this.depthDirty then
       -- Keep distance scaling/alpha on the actual render cadence. The more
       -- expensive plate data and depth bookkeeping remain capped below.
       frameState.now = now
+      if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
       zNameplates.UpdateStickyPlacements(now, visiblePlates, ShouldOverlap, frameState.targetGuid, frameState.mouseoverGuid)
+      if cost then zNameplates.EndPlateCost("zNP layout and projection",cost,generation,visiblePlateCount) end
+      if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
       for plate in pairs(visiblePlates) do
         if plate:IsVisible() then nameplates.OnUpdate(plate, frameState, true) end
       end
+      if cost then zNameplates.EndPlateCost("zNP plate visual-data loop",cost,generation,visiblePlateCount) end
+      if profileStart then zNameplates.EndPlateCost("zNP full frame",profileStart,profileGeneration,visiblePlateCount) end
+      zNameplates.platePerfActive=nil
       return
     end
     this.frameTick = now
@@ -1495,21 +1535,31 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
       end
     end
 
+    if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
     if zNameplates.UpdatePlateClusters(now, visiblePlates, visiblePlateCount, this.depthDirty) then
       this.depthDirty = true
     end
+    if cost then zNameplates.EndPlateCost("zNP cluster bookkeeping",cost,generation,visiblePlateCount) end
+    if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
     if zNameplates.ShouldUpdatePlateDepth(now, visiblePlateCount, this.depthDirty) then
       this.depthDirty = nil
       UpdateNameplateDepthLayers()
     end
+    if cost then zNameplates.EndPlateCost("zNP depth ordering and layers",cost,generation,visiblePlateCount) end
 
+    if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
     zNameplates.UpdateStickyPlacements(now, visiblePlates, ShouldOverlap, frameState.targetGuid, frameState.mouseoverGuid)
+    if cost then zNameplates.EndPlateCost("zNP layout and projection",cost,generation,visiblePlateCount) end
 
+    if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
     for plate in pairs(visiblePlates) do
       if plate:IsVisible() then
         nameplates.OnUpdate(plate, frameState)
       end
     end
+    if cost then zNameplates.EndPlateCost("zNP plate visual-data loop",cost,generation,visiblePlateCount) end
+    if profileStart then zNameplates.EndPlateCost("zNP full frame",profileStart,profileGeneration,visiblePlateCount) end
+    zNameplates.platePerfActive=nil
   end)
 
   -- combat tracker
@@ -2342,8 +2392,16 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     -- Use GUID comparison as primary target detection: instant, immune to alpha transitions,
     -- and immediately correct on de-target (unlike istarget which updates one tick later)
     local targetGuid = state and state.targetGuid
-    local target = (targetGuid and nameplate.cachedGuid and targetGuid == nameplate.cachedGuid) or
-                   (state and state.targetGuid and frame:GetAlpha() >= 0.99) or nil
+    local target
+    if targetGuid then
+      if nameplate.cachedGuid then
+        target = targetGuid == nameplate.cachedGuid or nil
+      else
+        -- Alpha is only a legacy fallback when this plate has no GUID. World-
+        -- owned native frames are all opaque, not all the player's target.
+        target = frame:GetAlpha() >= 0.99 or nil
+      end
+    end
     local configAlpha = cfg.notargalpha or 0.5
     local baseAlpha = (target or not targetGuid) and 1 or configAlpha
 
@@ -2425,18 +2483,18 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     local useOverlap = collisionReleased or nameplate.stickyPlacement ~= nil or C.nameplates["vertical_offset"] ~= "0"
     local clickable = nameplate.clusterGroup ~= nil or C.nameplates["clickthrough"] ~= "1"
     if nameplate.worldPlacementHidden then clickable=false end
+    if nameplate.uiClickBlocked then clickable=false end
     if nameplate.isFriendly and C.nameplates.clickthrough_friendly == "1" then clickable = false end
 
-    if not clickable then
-      frame:EnableMouse(false)
-      nameplate:EnableMouse(false)
-    elseif useOverlap then
-      frame:EnableMouse(false)
-      nameplate:EnableMouse(true)
-    else
-      frame:EnableMouse(true)
-      nameplate:EnableMouse(false)
-    end
+    local nativeMouse = clickable and not useOverlap or false
+    local overlayMouse = clickable and useOverlap or false
+    if clickable and C.nameplates["clickthrough"] == "0" and collisionReleased
+        and not nameplate.clusterGroup and SpellIsTargeting() then overlayMouse = false end
+    -- Write only the final receiver state. Re-enabling an already enabled
+    -- overlay (or enabling then disabling it for a targeting spell) needlessly
+    -- invalidates the client's mouse focus and can retrigger hover handlers.
+    if (frame:IsMouseEnabled() and true or false) ~= nativeMouse then frame:EnableMouse(nativeMouse) end
+    if (nameplate:IsMouseEnabled() and true or false) ~= overlayMouse then nameplate:EnableMouse(overlayMouse) end
 
     if collisionReleased then
       if abs(frame:GetWidth()-1)>.01 or abs(frame:GetHeight()-1)>.01 then
@@ -2451,11 +2509,6 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
       if abs(frame:GetWidth()-width) > .1 or abs(frame:GetHeight()-height) > .1 then
         frame:SetSize(width, height)
       end
-    end
-
-    local mouseEnabled = nameplate:IsMouseEnabled()
-    if clickable and C.nameplates["clickthrough"] == "0" and collisionReleased and SpellIsTargeting() == mouseEnabled then
-      if not nameplate.clusterGroup then nameplate:EnableMouse(not mouseEnabled) end
     end
 
     -- Target transition triggers immediate depth layer update
@@ -2796,7 +2849,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     -- active, but keeping its forwarding handler installed avoids stale click
     -- behavior when a pooled plate changes from friendly to hostile (or back).
     nameplate:SetScript("OnClick", function()
-      if not zNameplates.IsPlateClickBlocked() then zNameplates.ClickPlate(nameplate, arg1) end
+      zNameplates.ClickPlate(nameplate, arg1)
     end)
 
     -- enable mouselook on rightbutton down
@@ -2811,6 +2864,8 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
 
   local hookOnDataChanged = nameplates.OnDataChanged
   nameplates.OnDataChanged = function(self, nameplate)
+    local cost,generation
+    if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
     if nameplate.losOutOfSight then
       -- Refresh from original colours, never from a previously grayed value.
       RestoreLineOfSightColors(nameplate, nameplate.losVisualColors)
@@ -2832,6 +2887,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     else
       nameplate:EnableMouse(false)
     end
+    if cost then zNameplates.EndPlateCost("zNP full plate data refresh",cost,generation) end
   end
 
   -- enable mouselook on rightbutton down
@@ -2840,6 +2896,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
   nameplates.mouselook.frame = nil
   nameplates.mouselook.OnMouseDown = function()
     if arg1 and arg1 == "RightButton" then
+      if zNameplates.IsPlateClickBlocked(nil, true) then return end
       MouselookStart()
 
       -- start detection of the rightclick emulation
@@ -2864,6 +2921,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
 
     -- run a usual nameplate rightclick action
     if not IsMouselooking() then
+      if zNameplates.IsPlateClickBlocked(nil, true) then this:Hide(); return end
       this.frame:Click("LeftButton")
       if UnitCanAttack("player", "target") and not nameplates.combat.inCombat then AttackTarget() end
       this:Hide()
@@ -2878,15 +2936,19 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
   nameplates.OnUpdate = function(frame, state, visualOnly)
     local plate = frame.nameplate
     if plate.clusterHidden then return end
+    local blocked = zNameplates.IsPlateClickBlocked(state and state.now)
+    if (plate.uiClickBlocked or false) ~= blocked then
+      plate.uiClickBlocked = blocked or nil
+      -- Restore the right receiver promptly when a window closes; never enable
+      -- then disable it every data tick while that window remains under mouse.
+      plate.lasttick = nil
+    end
     updatePlate(frame, state, visualOnly)
     if plate.clusterGroup then zNameplates.RenderPlateCluster(plate) end
-    if zNameplates.IsPlateClickBlocked(state and state.now) then
-      frame:EnableMouse(false)
-      plate:EnableMouse(false)
-      plate.uiClickBlocked = true
-    elseif plate.uiClickBlocked then
-      plate.uiClickBlocked = nil
-      plate.lasttick = nil
+    if blocked then
+      if frame:IsMouseEnabled() then frame:EnableMouse(false) end
+      if plate:IsMouseEnabled() then plate:EnableMouse(false) end
+      zNameplates.ClearPlateMouseover(plate)
     end
   end
   nameplates.IsCombatWithPlayer = IsCombatWithPlayer

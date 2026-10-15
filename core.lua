@@ -371,43 +371,79 @@ function Z.ShouldUseCombatNameColor(plate, enabled)
     and UnitAffectingCombat(unit) and UnitAffectingCombat("player") or nil
 end
 
-function Z.IsPlateClickBlocked(now)
+local function PlateMouseFocusKind(frame)
+  if not frame or frame == UIParent or frame == WorldFrame then return "world" end
+  local current = frame
+  for i = 1, 30 do
+    if current.nameplate or current.platename then return "plate" end
+    if current == WorldFrame then return "world" end
+    if current == UIParent then return "interface" end
+    if not current.GetParent then break end
+    current = current:GetParent()
+    if not current then break end
+  end
+  return "unknown"
+end
+
+function Z.IsPlateClickBlocked(now, force)
   now = now or GetTime()
-  if Z.clickBlockTime == now then return Z.clickBlocked end
+  if not force and Z.clickBlockTime == now
+      and Z.clickFocusAPI == GetMouseFocus and Z.clickFociAPI == GetMouseFoci then
+    return Z.clickBlocked
+  end
   Z.clickBlockTime = now
-  local function IsInterface(frame)
-    if not frame or frame == UIParent or frame == WorldFrame then return false end
-    local current = frame
-    for i = 1, 30 do
-      if current.nameplate or current.platename then return false end
-      if current == WorldFrame then return false end
-      if current == UIParent then return true end
-      if not current.GetParent then return false end
-      current = current:GetParent()
-      if not current then return false end
-    end
-    return false
-  end
-  local blocked = false
-  if GetMouseFoci then
-    local frames = GetMouseFoci()
-    if type(frames) == "table" then
-      for _, frame in pairs(frames) do
-        if IsInterface(frame) then blocked = true; break end
-      end
-    end
-  elseif GetMouseFocus then
-    blocked = IsInterface(GetMouseFocus())
-  end
-  -- Legacy clients do not expose all mouse foci. Check open stock panels too.
+  Z.clickFocusAPI, Z.clickFociAPI = GetMouseFocus, GetMouseFoci
+  local cost,generation
+  if Z.platePerfActive then cost,generation=Z.BeginPlateCost() end
+
+  -- Vanilla stores the top mouse focus already. ClassicAPI's GetMouseFoci,
+  -- however, walks EVERY UI frame and calls its Lua region methods. Never do
+  -- that at render rate simply because nameplates are visible in a town.
+  local focus = GetMouseFocus and GetMouseFocus()
+  local kind = PlateMouseFocusKind(focus)
+  local blocked = kind == "interface"
+  -- Also protect stock window backgrounds on clients without the stack API.
   if not blocked and MouseIsOver and UIPanelWindows then
     for name in pairs(UIPanelWindows) do
       local frame = _G[name]
       if frame and frame:IsVisible() and MouseIsOver(frame) then blocked = true; break end
     end
   end
+  -- A plate can be above an interface window. Inspect that ambiguous stack at
+  -- most 10 Hz while hovering; world/UI focus needs no global scan at all.
+  -- Enter/click/right-click always request a fresh check, even in the same tick,
+  -- so opening a window under a stationary cursor cannot leak a target click.
+  if not blocked and GetMouseFoci and (force or not GetMouseFocus or kind ~= "world") then
+    if force or Z.clickStackAPI ~= GetMouseFoci or Z.clickStackFocus ~= focus
+        or not Z.clickStackTime or now < Z.clickStackTime or now >= Z.clickStackTime + .1 then
+      local stackBlocked = false
+      local frames = GetMouseFoci()
+      if type(frames) == "table" then
+        for _, frame in pairs(frames) do
+          if PlateMouseFocusKind(frame) == "interface" then stackBlocked = true; break end
+        end
+      end
+      Z.clickStackTime, Z.clickStackFocus, Z.clickStackAPI = now, focus, GetMouseFoci
+      Z.clickStackBlocked = stackBlocked
+    end
+    blocked = Z.clickStackBlocked
+  end
   Z.clickBlocked = blocked
+  if cost then Z.EndPlateCost("zNP interface input guard",cost,generation) end
   return blocked
+end
+
+-- Narrow opt-in spans use the existing recorder. They are inclusive diagnostics,
+-- not extra frame totals; no clocks/records are touched when recording is off.
+function Z.BeginPlateCost()
+  if not Z.platePerfActive then return end
+  return OctoPerf.BeginOperation()
+end
+
+function Z.EndPlateCost(label, started, generation, detail)
+  if not started then return end
+  if type(detail)=="number" then detail="visible="..tostring(detail) end
+  OctoPerf.EndOperation(label,started,generation,detail)
 end
 
 -- Reuse native reads within one rendered frame. Cache by identity as well as
@@ -428,7 +464,10 @@ function Z.GetPlateProjection(plate, now)
   local command = Z.GetPlateProjectionCommand()
   if sample.time ~= now or sample.identity ~= identity or sample.api ~= zAPI or sample.command ~= command then
     sample.time, sample.identity, sample.api, sample.command = now, identity, zAPI, command
+    local cost,generation
+    if Z.platePerfActive then cost,generation=Z.BeginPlateCost() end
     local ok, x, y, depth, wx, wy, wz = pcall(zAPI, command, identity, 0)
+    if cost then Z.EndPlateCost("zNP native anchor projection",cost,generation) end
     sample.x, sample.y, sample.depth = nil, nil, nil
     sample.wx, sample.wy, sample.wz = nil, nil, nil
     if ok then
@@ -467,8 +506,10 @@ function Z.IsPlateUnitCurrent(plate,now)
       or sample.api~=UnitGUID or sample.exists~=UnitExists or sample.lookup~=lookup or sample.parent~=plate.parent then
     local current=UnitExists(unit) and UnitGUID(unit)==guid or false
     if current and lookup then current=lookup(unit)==plate.parent end
-    sample={time=now,unit=unit,guid=guid,api=UnitGUID,exists=UnitExists,lookup=lookup,parent=plate.parent,current=current}
-    plate.unitValidation=sample
+    if not sample then sample={}; plate.unitValidation=sample end
+    sample.time,sample.unit,sample.guid=now,unit,guid
+    sample.api,sample.exists,sample.lookup=UnitGUID,UnitExists,lookup
+    sample.parent,sample.current=plate.parent,current
   end
   return sample.current
 end
@@ -537,6 +578,70 @@ function Z.ShouldUpdatePlateDepth(now, count, dirty)
   return false
 end
 
+function Z.AssignStablePlateDepthRanks(plates, count, ranks)
+  -- Rendering depends on front-to-back ORDER, not a new absolute-depth band
+  -- every 0.4 yards. Retain rank slots across camera motion and removals; an
+  -- adjacent depth crossing swaps just those two slots, not every child tree.
+  local state=Z.depthRankState
+  if not state then state={slots={},used={},ranks={}}; Z.depthRankState=state end
+  ranks=ranks or state.ranks
+  local slots,used=state.slots,state.used
+  for i=#slots,1,-1 do slots[i]=nil end
+  for k in pairs(used) do used[k]=nil end
+  for k in pairs(ranks) do ranks[k]=nil end
+  local known=0
+  if count<=100 then
+    for i=1,count do
+      local plate=plates[i].nameplate
+      local identity=plate.cachedGuid or plate.unit or plate.platename or plate
+      local rank=plate.depthLayerIdentity==identity and plate.depthLayerRank
+      if type(rank)=="number" and rank>=1 and rank<=100 and rank==math.floor(rank) and not used[rank] then
+        ranks[i]=rank; known=known+1; slots[known]=rank; used[rank]=true
+      end
+    end
+  end
+  if known==0 then
+    for i=1,count do
+      -- Keep gaps at both ends and between slots for new plates. Above the
+      -- addon's existing 100-rank budget, share bounded ranks as before.
+      slots[i]=count<=100 and math.floor(i*101/(count+1))
+        or math.floor(1+(i-1)*99/math.max(1,count-1))
+    end
+  else
+    table.sort(slots)
+    for i=1,count do
+      if not ranks[i] then
+        local left,right=0,101
+        for j=i-1,1,-1 do if ranks[j] then left=ranks[j]; break end end
+        for j=i+1,count do if ranks[j] then right=ranks[j]; break end end
+        local rank=left<right and math.floor((left+right)*.5) or nil
+        if not rank or rank<=left or rank>=right or used[rank] then
+          -- No local gap: split the largest free gap. This is rare and keeps
+          -- unaffected slots instead of re-spacing the entire visible scene.
+          local previous,gap=0,0
+          for j=1,#slots+1 do
+            local following=slots[j] or 101
+            if following-previous>gap then
+              gap=following-previous; rank=math.floor((previous+following)*.5)
+            end
+            previous=following
+          end
+        end
+        local at=#slots+1
+        while at>1 and slots[at-1]>rank do slots[at]=slots[at-1]; at=at-1 end
+        slots[at]=rank; used[rank]=true; ranks[i]=rank
+      end
+    end
+  end
+  for i=1,count do
+    local plate=plates[i].nameplate
+    ranks[i]=slots[i]
+    plate.depthLayerRank=slots[i]
+    plate.depthLayerIdentity=plate.cachedGuid or plate.unit or plate.platename or plate
+  end
+  return ranks
+end
+
 function Z.SuppressNativePlateVisuals(plate)
   -- Keep native regions shown for health/level/elite data, but never render
   -- them. The client can restore textures and text widths when reusing a slot.
@@ -563,7 +668,6 @@ function Z.UpdatePlateTransition(plate, now)
   local enabled = C.smooth_transitions == "1"
   plate.appearanceAlpha = enabled and math.min(1, math.max(0, (now - state.started) / duration)) or 1
   local uiScale = UIParent.GetEffectiveScale and UIParent:GetEffectiveScale() or 1
-  local parentScale = parent.GetEffectiveScale and parent:GetEffectiveScale() or 1
   local plateScale = plate.GetEffectiveScale and plate:GetEffectiveScale() or 1
   if uiScale <= 0 or plateScale <= 0 then return end
   if plate.worldPlacementOwned then
@@ -576,11 +680,13 @@ function Z.UpdatePlateTransition(plate, now)
     oy=oy+(tonumber(C.vertical_offset) or 0)
     if state.appliedReference~=UIParent or not state.appliedX or math.abs(ox-state.appliedX)>.001
         or math.abs(oy-state.appliedY)>.001 then
-      plate:ClearAllPoints(); plate:SetPoint("TOP",UIParent,"BOTTOMLEFT",ox,oy)
+      if state.appliedReference~=UIParent or not state.appliedX then plate:ClearAllPoints() end
+      plate:SetPoint("TOP",UIParent,"BOTTOMLEFT",ox,oy)
       state.appliedReference=UIParent; state.appliedX,state.appliedY=ox,oy
     end
     return
   end
+  local parentScale = parent.GetEffectiveScale and parent:GetEffectiveScale() or 1
   local x, y = parent:GetCenter()
   if not x or not y then return end
   x, y = x * parentScale / uiScale,
@@ -628,7 +734,7 @@ function Z.UpdatePlateTransition(plate, now)
   end
   if state.appliedReference ~= reference or not state.appliedX or math.abs(ox - state.appliedX) > .001
       or math.abs(oy - state.appliedY) > .001 then
-    plate:ClearAllPoints()
+    if state.appliedReference ~= reference or not state.appliedX then plate:ClearAllPoints() end
     plate:SetPoint("TOP", reference, referencePoint, ox, oy)
     state.appliedReference = reference
     state.appliedX, state.appliedY = ox, oy

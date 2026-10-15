@@ -14,10 +14,11 @@ abs=math.abs
 ShouldOverlap=function() return overlap end
 ReleaseAtScreenEdge=function() return false end
 SpellIsTargeting=function() return targeting end
+mouseWrites=0
 function widget()
  local w={mouse=false,width=80,height=20,dwidth=1}
- function w:EnableMouse(v) self.mouse=v end
- function w:IsMouseEnabled() return self.mouse end
+ function w:EnableMouse(v) self.mouse=v; mouseWrites=mouseWrites+1 end
+ function w:IsMouseEnabled() if legacyBooleans then return self.mouse and 1 or nil end return self.mouse end
  function w:GetWidth() return self.width end
  function w:GetHeight() return self.height end
  function w:GetSize() return self.width,self.height end
@@ -60,5 +61,23 @@ targeting=false; nameplate.worldPlacementHidden=true; update()
 assert(not frame.mouse and not nameplate.mouse)
 nameplate.worldPlacementHidden=nil; nameplate.worldPlacementOwned=false
 update(); assert(frame.mouse and frame.width==90 and frame.height==34)
+-- Stable ownership must not rewrite mouse focus, including 1/nil clients.
+for _,legacy in ipairs({false,true}) do
+ legacyBooleans=legacy
+ for _,spell in ipairs({false,true}) do
+  targeting=spell; nameplate.worldPlacementOwned=true; update()
+  local before=mouseWrites
+  for i=1,120 do update() end
+  assert(mouseWrites==before)
+  assert(nameplate.mouse==not spell and not frame.mouse)
+ end
+end
+nameplate.uiClickBlocked=true; update()
+assert(not frame.mouse and not nameplate.mouse)
+local before=mouseWrites
+for i=1,120 do update() end
+assert(mouseWrites==before)
+nameplate.uiClickBlocked=nil; targeting=false; update()
+assert(nameplate.mouse and not frame.mouse)
 ''')
 print("Friendly click-through checks passed")

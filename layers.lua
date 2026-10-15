@@ -36,8 +36,19 @@ function Z.RepairPlateTextLayers(plate, now)
   end
 end
 
-function Z.ApplyPlateLayers(plate, strata, base)
+function Z.ApplyPlateLayers(plate, strata, base, now)
   if not plate then return end
+  -- Timed calls are the hot depth pass. Explicit untimed config/creation
+  -- calls still repair the complete tree immediately. A periodic audit catches
+  -- external child-only changes without walking every hidden aura each tick.
+  if now and not plate.layersDirty and plate.cachedStrata==strata and plate.cachedBaseLevel==base
+      and plate.layerAuditAt and now<plate.layerAuditAt
+      and plate.parent:GetFrameStrata()==strata and plate.parent:GetFrameLevel()==base
+      and plate:GetFrameStrata()==strata and plate:GetFrameLevel()==base+1
+      and plate.health:GetFrameStrata()==strata and plate.health:GetFrameLevel()==base+3 then
+    Z.RepairPlateTextLayers(plate,now)
+    return
+  end
   Layer(plate.parent, strata, base)
   Layer(plate, strata, base + 1)
   Layer(plate.health, strata, base + 3)
@@ -61,6 +72,13 @@ function Z.ApplyPlateLayers(plate, strata, base)
   Layer(plate.clusterCountFrame, strata, base + 10)
   Z.RepairPlateTextLayers(plate)
   plate.cachedStrata, plate.cachedBaseLevel = strata, base
+  plate.layersDirty=nil
+  if now then
+    local phase=((tonumber(string.sub(tostring(plate.cachedGuid or plate.unit or ""),-4),16) or 0)%10)*.05
+    plate.layerAuditAt=(math.floor((now-phase)/.5+.000001)+1)*.5+phase
+  else
+    plate.layerAuditAt=nil
+  end
 end
 
 SLASH_ZNPDUMP1 = "/znpdump"

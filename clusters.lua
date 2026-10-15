@@ -160,7 +160,7 @@ function Z.GetPlateClickMember(plate)
 end
 
 function Z.ClickPlate(plate, button)
-  if Z.IsPlateClickBlocked and Z.IsPlateClickBlocked() then return end
+  if Z.IsPlateClickBlocked and Z.IsPlateClickBlocked(nil, true) then return end
   -- Hover and clicks share the same live lowest-health member calculation.
   local member = Z.GetPlateClickMember(plate)
   if member then member.parent:Click(button or "LeftButton") end
@@ -181,7 +181,7 @@ end
 
 local function SetPlateMouseover(plate, receiver, force)
   if not HoverEnabled() or plate.clusterHidden or
-      (Z.IsPlateClickBlocked and Z.IsPlateClickBlocked()) then
+      (Z.IsPlateClickBlocked and Z.IsPlateClickBlocked(nil, force)) then
     Z.ClearPlateMouseover(plate)
     return
   end

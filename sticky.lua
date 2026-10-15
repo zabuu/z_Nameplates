@@ -3,6 +3,8 @@ local Z = zNameplates
 local sequence = 0
 local nextSolve = 0
 local entries = {}
+local avoidanceEntries = {}
+local identities = {}
 
 local function Intersects(a, x, y, b, padding)
   return math.abs(x-b.x) < (a.w+b.w)*.5 + padding
@@ -79,7 +81,8 @@ local function Penalty(s,dx,dy,count)
 end
 
 local function HideLink(plate)
-  if plate.layoutAnchorLink then plate.layoutAnchorLink:Hide() end
+  local link=plate.layoutAnchorLink
+  if link and link:IsShown() then link:Hide() end
 end
 
 local function DrawLink(plate,s,uiScale)
@@ -98,22 +101,32 @@ local function DrawLink(plate,s,uiScale)
     end
     plate.layoutAnchorLink=link
   end
-  link:SetScale(uiScale/plate.parent:GetEffectiveScale())
-  link:SetFrameStrata(plate:GetFrameStrata()); link:SetFrameLevel(math.max(0,plate:GetFrameLevel()-1))
+  local scale=uiScale/plate.parent:GetEffectiveScale()
+  if math.abs(link:GetScale()-scale)>.000001 then link:SetScale(scale) end
+  local strata,level=plate:GetFrameStrata(),math.max(0,plate:GetFrameLevel()-1)
+  if link:GetFrameStrata()~=strata then link:SetFrameStrata(strata) end
+  if link:GetFrameLevel()~=level then link:SetFrameLevel(level) end
   for i,dot in ipairs(link.dots) do
     local t=i/13
-    dot:ClearAllPoints(); dot:SetPoint("CENTER",UIParent,"BOTTOMLEFT",s.baseX+s.displayX*t,s.baseY+s.displayY*t)
+    local x,y=s.baseX+s.displayX*t,s.baseY+s.displayY*t
+    if not dot.znpAnchorX or math.abs(x-dot.znpAnchorX)>.001 or math.abs(y-dot.znpAnchorY)>.001 then
+      dot:SetPoint("CENTER",UIParent,"BOTTOMLEFT",x,y)
+      dot.znpAnchorX,dot.znpAnchorY=x,y
+    end
   end
-  link:Show()
+  if not link:IsShown() then link:Show() end
 end
 
 local function UpdateStickyPlacements(now, visible, shouldOverlap, targetGuid, hoverGuid)
   local C = Z.config.nameplates
   local enabled = C.sticky_placement == "1" and type(zAPI) == "function"
   local ui = UIParent:GetEffectiveScale()
+  local uiWidth,uiHeight=UIParent:GetWidth(),UIParent:GetHeight()
+  local bufferX=math.max(0,math.min(40,tonumber(C.collision_buffer_x) or 0))
+  local bufferY=math.max(0,math.min(40,tonumber(C.collision_buffer_y) or 0))
   local petGuid=UnitExists and UnitGUID and UnitExists("pet") and UnitGUID("pet")
   local count = 0
-  local identities={}
+  for identity in pairs(identities) do identities[identity]=nil end
   for parent in pairs(visible) do
     local plate = parent.nameplate
     local identity = plate and (plate.cachedGuid or plate.unit)
@@ -137,7 +150,7 @@ local function UpdateStickyPlacements(now, visible, shouldOverlap, targetGuid, h
       if eligible and previous and previous.identity==identity then
         previous.projectionMissing=true
         previous.avoidance=false
-        previous.neighbors={}
+        if previous.neighbors then for j=#previous.neighbors,1,-1 do previous.neighbors[j]=nil end end
         plate.worldPlacementHidden=now-previous.last>.12
         HideLink(plate)
       elseif plate then
@@ -147,7 +160,7 @@ local function UpdateStickyPlacements(now, visible, shouldOverlap, targetGuid, h
       end
     else
       if eligible then
-        sx, sy = sx*UIParent:GetWidth(), sy*UIParent:GetHeight()
+        sx, sy = sx*uiWidth, sy*uiHeight
         local s = plate.stickyPlacement
         if not s or s.identity ~= identity then
           sequence = sequence+1
@@ -164,8 +177,6 @@ local function UpdateStickyPlacements(now, visible, shouldOverlap, targetGuid, h
         s.sx, s.sy, s.last = sx, sy, now
         s.plate = plate
         local scale = plate:GetEffectiveScale()/ui
-        local bufferX=math.max(0,math.min(40,tonumber(C.collision_buffer_x) or 0))
-        local bufferY=math.max(0,math.min(40,tonumber(C.collision_buffer_y) or 0))
         if not s.contentW or (s.avoidance and now>=nextSolve) then
           s.contentW,s.contentH,s.cx,s.cy=Measure(plate,ui)
         end
@@ -193,34 +204,49 @@ local function UpdateStickyPlacements(now, visible, shouldOverlap, targetGuid, h
   -- Friendly labels (including pets and passive neutrals) are a separate
   -- collision scene. Even a friendly fighting our target must not push that
   -- enemy's plate off its anchor. Update on grace samples as well as fresh ones.
+  local avoidanceCount=0
   for i=1,count do
     local s=entries[i]
     local plate=s.plate
     s.collisionFamily=(plate.isFriendly or (petGuid and s.identity==petGuid)
       or (plate.isNeutral and not plate.neutralProvoked)) and "friendly" or "hostile"
+    if s.avoidance then
+      avoidanceCount=avoidanceCount+1; avoidanceEntries[avoidanceCount]=s
+    else
+      -- Town labels allowed to overlap still track their world anchors, but
+      -- are neither obstacles nor solver clients. Release old displacement
+      -- targets immediately; the normal render damping brings them home.
+      s.dx,s.dy=0,0
+      s.x,s.y=s.baseX+s.cx,s.baseY+s.cy
+      s.returningHome=true; s.collisionSince=nil
+      if s.neighbors then for j=#s.neighbors,1,-1 do s.neighbors[j]=nil end end
+    end
   end
+  for i=#avoidanceEntries,avoidanceCount+1,-1 do avoidanceEntries[i]=nil end
+  if avoidanceCount==0 then return end
   -- Bound avoidance work without surrendering anchoring to native stacking.
   if count>100 then
     for i=1,count do
-      local s=entries[i]; s.avoidance=false; s.dx,s.dy=0,0; s.neighbors={}
+      local s=entries[i]; s.avoidance=false; s.dx,s.dy=0,0; s.returningHome=true
+      if s.neighbors then for j=#s.neighbors,1,-1 do s.neighbors[j]=nil end end
       HideLink(s.plate)
     end
     return
   end
   if now<nextSolve then return end
   nextSolve=now+.05
-  table.sort(entries,function(a,b)
+  table.sort(avoidanceEntries,function(a,b)
     if a.hovered~=b.hovered then return a.hovered end
     return a.order<b.order
   end)
   local delay = math.max(.05,math.min(.5,tonumber(C.sticky_delay) or .15))
   local maximum=math.max(32,math.min(180,tonumber(C.sticky_max_displacement) or 96))
-  for i=1,count do
-    local s=entries[i]
+  for i=1,avoidanceCount do
+    local s=avoidanceEntries[i]
     local nearby=s.neighbors or {}; s.neighbors=nearby
     local n=0
-    for j=1,count do
-      local other=entries[j]
+    for j=1,avoidanceCount do
+      local other=avoidanceEntries[j]
       if s.avoidance and other.avoidance and other~=s and other.collisionFamily==s.collisionFamily
           and math.abs(s.baseX+s.cx-other.x)<(s.w+other.w)*.5+maximum
           and math.abs(s.baseY+s.cy-other.y)<(s.h+other.h)*.5+maximum*2 then
@@ -294,26 +320,35 @@ function Z.UpdateStickyPlacements(now,visible,shouldOverlap,targetGuid,hoverGuid
   return result
 end
 
+local function Advance(position,velocity,target,elapsed,omega,speed,decay)
+  local change=position-target
+  local temp=(velocity+omega*change)*elapsed
+  local nextPosition=target+(change+temp)*decay
+  local delta=math.max(-speed*elapsed,math.min(speed*elapsed,nextPosition-position))
+  position=position+delta
+  velocity=math.max(-speed,math.min(speed,(velocity-omega*temp)*decay))
+  -- Settle below a thousandth of a UI pixel instead of integrating infinitesimal
+  -- tails forever. Share this helper rather than allocating a closure per plate.
+  if math.abs(position-target)<.001 and math.abs(velocity)<.01 then return target,0 end
+  return position,velocity
+end
+
 function Z.ApplyStickyPlacement(plate,now,nativeX,nativeY,uiScale,plateScale)
   local s=plate.stickyPlacement
   if not s then return end
   local elapsed=math.max(0,math.min(.05,now-(s.renderTime or now)))
   s.renderTime=now
-  local duration=math.max(.1,math.min(.6,tonumber(Z.config.nameplates.sticky_motion_duration) or .22))
-  local speed=math.max(40,math.min(400,tonumber(Z.config.nameplates.sticky_motion_speed) or 140))
-  if s.returningHome and s.hovered then speed=speed*.4 end
-  local omega=2/duration
-  local function Advance(position,velocity,target)
-    if s.hovered and s.avoidance and not s.returningHome then return position,0 end
-    local change=position-target
-    local temp=(velocity+omega*change)*elapsed
+  if s.hovered and s.avoidance and not s.returningHome then
+    s.vx,s.vy=0,0
+  elseif s.displayX~=s.dx or s.displayY~=s.dy or (s.vx or 0)~=0 or (s.vy or 0)~=0 then
+    local duration=math.max(.1,math.min(.6,tonumber(Z.config.nameplates.sticky_motion_duration) or .22))
+    local speed=math.max(40,math.min(400,tonumber(Z.config.nameplates.sticky_motion_speed) or 140))
+    if s.returningHome and s.hovered then speed=speed*.4 end
+    local omega=2/duration
     local decay=math.exp(-omega*elapsed)
-    local nextPosition=target+(change+temp)*decay
-    local delta=math.max(-speed*elapsed,math.min(speed*elapsed,nextPosition-position))
-    return position+delta,math.max(-speed,math.min(speed,(velocity-omega*temp)*decay))
+    s.displayX,s.vx=Advance(s.displayX,s.vx or 0,s.dx,elapsed,omega,speed,decay)
+    s.displayY,s.vy=Advance(s.displayY,s.vy or 0,s.dy,elapsed,omega,speed,decay)
   end
-  s.displayX,s.vx=Advance(s.displayX,s.vx or 0,s.dx)
-  s.displayY,s.vy=Advance(s.displayY,s.vy or 0,s.dy)
   DrawLink(plate,s,uiScale)
   -- Screen-relative; native collision movement cannot displace it mid-frame.
   -- Native-parent ownership still controls visibility and unit identity.
