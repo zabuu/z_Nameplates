@@ -94,7 +94,7 @@ lua.execute('''
 Z.Refresh=function() Z.options:Refresh() end
 Z.GetDefaultSetting=function(path) local v=Z.defaults; for _,k in ipairs(path) do v=v[k] end; return v end
 Z.options:Show(); Z.options:Refresh()
-assert(#Z.settingsPages==13)
+assert(#Z.settingsPages==14)
 local function findButton(text)
   for _,f in ipairs(frames) do if f.kind=="Button" and f:GetText()==text then return f end end
   error("Missing button "..text)
@@ -148,6 +148,7 @@ for _,page in ipairs(Z.settingsPages) do
   end
 end
 assert(names["platechat/width"]=="Chat")
+assert(names["groundeffects/size"]=="World timers")
 assert(names["nameplates/cluster_enabled"]=="Crowds")
 assert(names["nameplates/dummy_preview"]=="Preview")
 assert(names["nameplates/enemynamecolor"]=="Text")

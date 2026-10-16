@@ -5,7 +5,7 @@ from lupa.lua51 import LuaRuntime
 root = Path(__file__).resolve().parents[1]
 source = (root / "nameplates.lua").read_text(encoding="utf-8-sig")
 start = source.index("    local overlapEnabled = ShouldOverlap(nameplate)", source.index("-- OVERLAP/CLICKTHROUGH HANDLING"))
-end = source.index("    -- Target transition", start)
+end = source.index("    -- Target styling", start)
 lua = LuaRuntime(unpack_returned_tuples=True)
 lua.execute('''
 C={nameplates={clickthrough="0",clickthrough_friendly="1",vertical_offset="0"}}

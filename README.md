@@ -139,9 +139,13 @@ movement is excluded from this smoothing so normal camera movement stays
 responsive. Reused frames reset their animation and distance-scale state;
 large teleports are not eased across unrelated units.
 
-Crowded scenes refresh the entire depth ordering together at 30 Hz (60 Hz
-with up to 20 plates). Unit attachment/removal and target changes bypass that
-limit. Movement, transition smoothing, and distance scaling still update every
+Every rendered frame checks the front-to-back order using the camera depths
+already calculated for world attachment. An unchanged order needs only a linear
+check, with no sorting, screen-overlap comparisons or layer reassignment.
+Actual depth crossings and membership changes repair the order immediately,
+including the high-FPS visual-only path. Legacy depth fallbacks and defensive
+layer audits retain their 30 Hz crowd / 60 Hz small-scene cadence.
+Movement, transition smoothing, and distance scaling still update every
 rendered frame. Native projection results are shared between consumers within
 that frame, and the player's world position is read once rather than per plate.
 Pool recovery scans run twice a second; normal lifecycle events remain immediate.
@@ -150,8 +154,12 @@ The anti-flash guard checks opacity without rewriting already-invisible regions.
 Depth-layer slots follow relative front-to-back order, not absolute distance
 bands. Camera movement that preserves that order no longer re-layers whole
 plate trees. Removing plates preserves surviving slots; new plates use free
-gaps, and depth crossings exchange slots locally. Screen-overlap promotion and
-target priority remain active within the existing bounded layer range.
+gaps, and depth crossings exchange slots locally. Target and mouseover styling
+remain active but never promote a farther plate above a closer one. Each rank
+has a separate twelve-level band, including its text, cooldowns, count badge and
+chat label, so adjacent plates' contents cannot interleave. No world-depth
+testing is added: plates still render over terrain and buildings. The existing
+100-slot rank budget is unchanged; over-budget scenes share bounded slots.
 Render-rate movement updates the existing anchor rather than clearing all its
 points first; identity/reference changes still reset it. Settled avoidance
 offsets skip spring integration and closure allocation. LOS unit-existence
@@ -222,6 +230,10 @@ open full dropdown lists, with every font choice previewed in its own face.
 The Chat page enables speech beside visible speakers' names.
 It uses the current chat channel colours and offers position, offsets, scale,
 font, width, duration, fade, opacity, and channel filters.
+Chat keeps its configured opacity regardless of nameplate distance, line-of-sight,
+inactive-target, or appearance fading, while retaining smooth distance scaling
+and the message's own expiry fade. This also applies to chat projected without
+a visible player nameplate.
 Supported speech includes say/yell, party and leaders, raid and warnings,
 guild/officer, incoming/outgoing whispers, emotes,
 battleground/instance groups, and NPC/boss speech. Each category can be filtered
@@ -247,6 +259,41 @@ rounded corners hugs the message text with minimal padding. Its colour and
 opacity are configurable on the Chat tab (default charcoal at 35% opacity);
 setting background opacity to zero removes it. It follows the chat scale and
 fade while the text retains its channel colour.
+When forced self-chat is enabled, your own messages are centred above the
+character's head, using the real model name attachment when available. General
+left/right placement and chat X/Y offsets continue to apply to other speakers.
+
+## World timers
+
+The **World timers** settings page enables compact markers for your own hunter
+traps and flares. Icons come from the game, default to 22 px / 45% opacity, and
+have full-opacity outlined countdowns. Icon size/opacity, timer font, world
+height and scale are configurable. A subtle gold line means an armed trap;
+green means its effect has triggered. Markers never capture mouse input.
+
+zAPI 2.2 discovers only matching player-owned trap/dynamic objects. Their actual
+coordinates are locked in world space and reprojected with the camera, without
+per-frame object scans or guessed cursor locations. Flare counts down to expiry;
+traps count down to despawn, then switch on a confirmed own trigger to the
+effect's client-reported duration. Duplicate aura events do not restart it.
+Early removal clears single-target trap effects, while leaving a frost patch's
+timer intact when a victim exits its slow. Timers clear on world transitions.
+When Frost Trap consumes its armed object without a usable trigger event, the
+tracker can confirm the owned ice field at that same ground position and keep
+the existing icon through the handoff. It uses the field duration, not a victim's
+shorter slow, and does not rebind a vanished field to another trap. Markers use
+the same WorldFrame-to-UI scale conversion as nameplates, independently of the
+icon-size slider.
+
+Only casts observed this session are tracked: a reload cannot recover an old
+object's original creation time. Unknown/missing objects and unsupported DLLs
+fail closed rather than displaying a fabricated position. Pending discovery
+lasts at most three seconds; discovered objects are checked four times per
+second, and no discovery/render callback runs while idle.
+
+Trigger payloads and modified spell durations follow the
+[Nampower event](https://github.com/brues-code/nampower/blob/main/EVENTS.md) and
+[spell API](https://github.com/brues-code/nampower/blob/main/SCRIPTS.md) contracts.
 
 The first time zNameplates loads, it imports only relevant nameplate,
 appearance, font, cooldown, and throttle values from an available pfUI saved

@@ -61,6 +61,7 @@ function Z.ApplyPlateLayers(plate, strata, base, now)
       if aura then
         Layer(aura, strata, base + 4)
         Layer(aura.cd, strata, base + 5)
+        if aura.cd then Layer(aura.cd.zText, strata, base + 6) end
       end
     end
   end
@@ -70,6 +71,8 @@ function Z.ApplyPlateLayers(plate, strata, base, now)
   Layer(plate.raidiconframe, strata, base + 7)
   Layer(plate.textframe, strata, base + 8)
   Layer(plate.clusterCountFrame, strata, base + 10)
+  Layer(plate.chatLabel, strata, base + 11)
+  Layer(plate.layoutAnchorLink, strata, base)
   Z.RepairPlateTextLayers(plate)
   plate.cachedStrata, plate.cachedBaseLevel = strata, base
   plate.layersDirty=nil

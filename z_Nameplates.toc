@@ -15,3 +15,4 @@ sticky.lua
 nameplates.lua
 dummy.lua
 chat.lua
+groundeffects.lua

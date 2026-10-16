@@ -63,6 +63,10 @@ local defaults = {
     x = "1223.77657471", y = "-4.8518200319566",
   },
   profiles = { source = "@default" },
+  groundeffects = {
+    enabled="1", traps="1", flares="1", size="22", opacity=".45",
+    fontsize="11", height=".35", scale="1",
+  },
   platechat = {
     enabled = "0", show_without_plate = "0", position = "RIGHT", x = "6", y = "0",
     duration = "8", fade = "1", scale = "1", fontsize = "12",
@@ -569,7 +573,8 @@ function Z.NextPlateDataRefresh(plate, now)
 end
 
 function Z.ShouldUpdatePlateDepth(now, count, dirty)
-  -- Whole-scene updates: do not stagger individual plates into stale rankings.
+  -- Cadence for legacy depth reads and layer audits only. Native camera-depth
+  -- ordering is checked every rendered frame from the shared projection sample.
   local interval = count > 20 and 1 / 30 or 1 / 60
   if dirty or not Z.depthUpdateTime or now - Z.depthUpdateTime >= interval then
     Z.depthUpdateTime = now
@@ -640,6 +645,25 @@ function Z.AssignStablePlateDepthRanks(plates, count, ranks)
     plate.depthLayerIdentity=plate.cachedGuid or plate.unit or plate.platename or plate
   end
   return ranks
+end
+
+function Z.PlateDepthLess(a, b)
+  local na,nb=a.nameplate,b.nameplate
+  local da,db=na.depth or 40,nb.depth or 40
+  if da~=db then return da>db end
+  -- Exact ties have a deterministic identity order, never a target/mouse bias.
+  return (na.platename or na.cachedGuid or na.unit or tostring(a))
+    > (nb.platename or nb.cachedGuid or nb.unit or tostring(b))
+end
+
+function Z.GetPlateDepthLayer(rank)
+  local slot=math.max(0,math.min(99,(tonumber(rank) or 50)-1))
+  local band=math.floor(slot/20)
+  local strata=band==0 and "BACKGROUND" or band==1 and "LOW"
+    or band==2 and "MEDIUM" or band==3 and "HIGH" or "DIALOG"
+  -- Each plate owns twelve levels: native root through text, badge and chat.
+  -- Adjacent plates cannot interleave their child frames. Stay below 255.
+  return strata,2+(slot-band*20)*12
 end
 
 function Z.SuppressNativePlateVisuals(plate)
@@ -1574,6 +1598,7 @@ function Z.Refresh()
   if Z.combatList and Z.combatList.Refresh then Z.combatList:Refresh() end
   if Z.options and Z.options.Refresh then Z.options:Refresh() end
   if Z.RefreshPlateChat then Z.RefreshPlateChat() end
+  if Z.RefreshGroundEffects then Z.RefreshGroundEffects() end
 end
 
 local originalCombatTextAddMessage

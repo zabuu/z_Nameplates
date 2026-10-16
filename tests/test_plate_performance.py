@@ -76,7 +76,7 @@ print("Plate native-read caching and depth-cadence checks passed (Lua 5.1).")
 # It is defined before the local core frame, so that frame is not in scope.
 plates_source = (root / "nameplates.lua").read_text(encoding="utf-8-sig")
 depth_helper = plates_source[
-    plates_source.index("  local function UpdateNameplateDepthLayers()"):
+    plates_source.index("  local function UpdateNameplateDepthLayers("):
     plates_source.index("  local function SaveVisualColor(")
 ]
 lua.execute('''

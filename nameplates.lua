@@ -4,13 +4,7 @@ function zNameplates.StartNameplates()
   -- environment. Keeping them out of the lexical scope is important on the
   -- Vanilla Lua compiler, which allows only 32 upvalues per nested function.
   getfenv(1).C = zNameplates.config
-  getfenv(1).DEPTH_STRATAS = { "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG" }
   getfenv(1).depthPlates = {}
-  getfenv(1).plateLeft = {}
-  getfenv(1).plateRight = {}
-  getfenv(1).plateTop = {}
-  getfenv(1).plateBottom = {}
-  getfenv(1).plateStrata = {}
   getfenv(1).plateRank = {}
 
   -- disable original castbars
@@ -409,7 +403,7 @@ function zNameplates.StartNameplates()
     return sample.value
   end
 
-  local function GetUnitDepth(nameplate)
+  local function GetUnitDepth(nameplate, allowFallback)
     if not nameplate then return 40 end
     local guid = nameplate.cachedGuid
     local unit = nameplate.unit
@@ -432,15 +426,23 @@ function zNameplates.StartNameplates()
     -- 1. Native zAPI camera projection (exact 3D depth along camera view vector)
     -- This updates continuously during both camera rotation and player movement.
     if type(zAPI) == "function" and guid then
-      local sx, sy, depth = zNameplates.GetPlateProjection(nameplate, frameState.now)
+      local sample=nameplate.projectionSample
+      local depth
+      if sample and sample.time==frameState.now and sample.identity==guid and sample.api==zAPI then
+        depth=sample.depth
+      else
+        local sx,sy
+        sx,sy,depth=zNameplates.GetPlateProjection(nameplate,frameState.now)
+      end
       if type(depth) == "number" and depth > 0 then
         return depth
       end
       -- A world-owned projection gap is not a legacy-client failure. Hold
       -- its last depth through the short visibility grace instead of issuing
       -- a chain of native position/projection fallbacks for an off-camera unit.
-      if nameplate.worldPlacementOwned then return nameplate.depth or 40 end
+      if nameplate.worldPlacementOwned or allowFallback==false then return nameplate.depth or 40 end
     end
+    if allowFallback==false then return nameplate.depth or 40 end
 
     -- 2. Native zAPI worldToScreen from unitPosition
     if type(zAPI) == "function" and guid then
@@ -494,7 +496,7 @@ function zNameplates.StartNameplates()
     zNameplates.ApplyPlateLayers(nameplate, strata, baseLevel, frameState.now)
   end
 
-  local function UpdateNameplateDepthLayers()
+  local function UpdateNameplateDepthLayers(forceAudit)
     local now = frameState.now or GetTime()
     -- Ensure all visible plates have their GUID and unit token resolved immediately
     -- (critical for stationary targets, dummies, and plates present at /rl)
@@ -519,113 +521,67 @@ function zNameplates.StartNameplates()
       end
     end
 
-    table.wipe(depthPlates)
-    local count = 0
-    for plate in pairs(visiblePlates) do
-      if plate:IsVisible() and plate.nameplate and not plate.nameplate.clusterHidden
-          and zNameplates.IsPlateUnitCurrent(plate.nameplate,now) then
-        count = count + 1
-        depthPlates[count] = plate
-        local np = plate.nameplate
-        np.depth = GetUnitDepth(np)
+    local members=frameState.depthMembers
+    if not members then members={}; frameState.depthMembers=members end
+    local serial=(frameState.depthSerial or 0)+1
+    frameState.depthSerial=serial
+    local audit=zNameplates.ShouldUpdatePlateDepth(now,visiblePlateCount or 0,forceAudit)
+    local changed,dirtyLayers=false,false
+    for parent in pairs(visiblePlates) do
+      local np=parent.nameplate
+      if np and parent:IsVisible() and not np.clusterHidden and not np.worldPlacementHidden
+          and zNameplates.IsPlateUnitCurrent(np,now) then
+        local identity=np.cachedGuid or np.unit
+        local previous=members[parent]
+        local newIdentity=previous~=identity or np.depthIdentity~=identity
+        if newIdentity then
+          if not previous then depthPlates[#depthPlates+1]=parent end
+          members[parent]=identity; changed=true
+        end
+        np.depthSeen=serial
+        if np.depthIdentity~=identity then np.depth=nil; np.depthIdentity=identity end
+        -- Layout/visuals have already projected this unit for this frame.
+        -- GetUnitDepth reads that raw cached depth without another native call
+        -- or UI-coordinate conversion. Legacy fallbacks retain their cadence.
+        np.depth=GetUnitDepth(np,audit or newIdentity or np.depth==nil)
+        if np.layersDirty then dirtyLayers=true end
       end
     end
+    local count,oldCount=0,#depthPlates
+    for i=1,oldCount do
+      local parent=depthPlates[i]
+      if parent.nameplate.depthSeen==serial then
+        count=count+1; depthPlates[count]=parent
+      else
+        members[parent]=nil; changed=true
+      end
+    end
+    for i=oldCount,count+1,-1 do depthPlates[i]=nil end
+    if count==0 then return end
 
-    if count == 0 then return end
-
-    if count == 1 then
-      local np = depthPlates[1].nameplate
+    -- Linear adjacency check on every rendered frame; sort/reassign only if
+    -- membership changed or an actual camera-depth crossing broke the order.
+    if not changed then
+      for i=2,count do
+        if zNameplates.PlateDepthLess(depthPlates[i],depthPlates[i-1]) then changed=true; break end
+      end
+    end
+    local cost,generation
+    if changed then
+      if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
+      table.sort(depthPlates,zNameplates.PlateDepthLess)
       plateRank=zNameplates.AssignStablePlateDepthRanks(depthPlates,count,plateRank)
-      local rank=plateRank[1]
-      local sIdx = math.min(5, math.floor((rank - 1) / 20) + 1)
-      local sName = DEPTH_STRATAS[sIdx] or "LOW"
-      local bLvl = math.floor(2 + (rank - 1) * 0.9)
-      SetPlateDepthLayer(np, sName, bLvl)
-      return
     end
-
-    -- Sort strictly by camera depth (furthest from camera first, closest last)
-    -- Higher indices = closer plates -> receive higher ranks / stratas and render on top
-    table.sort(depthPlates, function(a, b)
-      local na = a.nameplate
-      local nb = b.nameplate
-      local da = na.depth or 40
-      local db = nb.depth or 40
-
-      if da ~= db then
-        return da > db -- larger depth = further away = sorted first
-      end
-
-      if na.istarget ~= nb.istarget then
-        return not na.istarget -- target tie-breaker only when depths are identical
-      end
-
-      return (na.platename or "") > (nb.platename or "")
-    end)
-
-    table.wipe(plateLeft)
-    table.wipe(plateRight)
-    table.wipe(plateTop)
-    table.wipe(plateBottom)
-    table.wipe(plateStrata)
-    plateRank=zNameplates.AssignStablePlateDepthRanks(depthPlates,count,plateRank)
-
-    for i = 1, count do
-      local p = depthPlates[i]
-      local np = p.nameplate
-      local l = np:GetLeft() or (p.GetLeft and p:GetLeft())
-      local r = np:GetRight() or (p.GetRight and p:GetRight())
-      local t = np:GetTop() or (p.GetTop and p:GetTop())
-      local b = np:GetBottom() or (p.GetBottom and p:GetBottom())
-      plateLeft[i] = l
-      plateRight[i] = r
-      plateTop[i] = t
-      plateBottom[i] = b
-    end
-
-    -- Map 100 ranks across the 5 discrete rendering stratas (20 ranks per strata)
-    for i = 1, count do
-      plateStrata[i] = math.min(5, math.floor((plateRank[i] - 1) / 20) + 1)
-    end
-
-    -- Dynamic overlap resolution:
-    -- When plate i is closer than plate j (i > j) and overlaps on screen:
-    -- plate i MUST be in a strictly higher strata than plate j.
-    for i = 2, count do
-      local li, ri, ti, bi = plateLeft[i], plateRight[i], plateTop[i], plateBottom[i]
-      if li and ri and ti and bi then
-        for j = 1, i - 1 do
-          local lj, rj, tj, bj = plateLeft[j], plateRight[j], plateTop[j], plateBottom[j]
-          if lj and rj and tj and bj then
-            if not (li > rj + 4 or ri < lj - 4 or bi > tj + 4 or ti < bj - 4) then
-              if plateStrata[i] <= plateStrata[j] then
-                plateStrata[i] = math.min(5, plateStrata[j] + 1)
-                plateRank[i] = math.max(plateRank[i], (plateStrata[i] - 1) * 20 + 1)
-              end
-            end
-          end
+    if changed or audit or dirtyLayers then
+      for i=1,count do
+        local np=depthPlates[i].nameplate
+        local strata,base=zNameplates.GetPlateDepthLayer(np.depthLayerRank)
+        if audit or np.layersDirty or np.cachedStrata~=strata or np.cachedBaseLevel~=base then
+          SetPlateDepthLayer(np,strata,base)
         end
       end
     end
-
-    -- Target priority boost if overlapping
-    for i = 1, count do
-      local np = depthPlates[i].nameplate
-      if np.istarget and plateStrata[i] < 5 then
-        plateStrata[i] = math.min(5, plateStrata[i] + 1)
-        plateRank[i] = math.max(plateRank[i], (plateStrata[i] - 1) * 20 + 1)
-      end
-    end
-
-    -- Apply strata and granular frame level (1 to 100)
-    for i = 1, count do
-      local np = depthPlates[i].nameplate
-      local sIdx = plateStrata[i] or 2
-      local sName = DEPTH_STRATAS[sIdx] or "LOW"
-      local r = plateRank[i] or 50
-      local baseLevel = math.floor(2 + (r - 1) * 0.9)
-      SetPlateDepthLayer(np, sName, baseLevel)
-    end
+    if cost then zNameplates.EndPlateCost("zNP depth reordering",cost,generation,count) end
   end
 
   local function SaveVisualColor(object, getter, color)
@@ -1487,8 +1443,8 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     zNameplates.platePerfActive=profileStart~=nil
     local cost,generation
     if (this.frameTick or 0) + .01 > now and not this.depthDirty then
-      -- Keep distance scaling/alpha on the actual render cadence. The more
-      -- expensive plate data and depth bookkeeping remain capped below.
+      -- Keep motion and depth crossings on the actual render cadence while
+      -- expensive unit-data refreshes remain capped below.
       frameState.now = now
       if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
       zNameplates.UpdateStickyPlacements(now, visiblePlates, ShouldOverlap, frameState.targetGuid, frameState.mouseoverGuid)
@@ -1498,6 +1454,9 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
         if plate:IsVisible() then nameplates.OnUpdate(plate, frameState, true) end
       end
       if cost then zNameplates.EndPlateCost("zNP plate visual-data loop",cost,generation,visiblePlateCount) end
+      if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
+      UpdateNameplateDepthLayers()
+      if cost then zNameplates.EndPlateCost("zNP depth ordering and layers",cost,generation,visiblePlateCount) end
       if profileStart then zNameplates.EndPlateCost("zNP full frame",profileStart,profileGeneration,visiblePlateCount) end
       zNameplates.platePerfActive=nil
       return
@@ -1541,13 +1500,6 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
     end
     if cost then zNameplates.EndPlateCost("zNP cluster bookkeeping",cost,generation,visiblePlateCount) end
     if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
-    if zNameplates.ShouldUpdatePlateDepth(now, visiblePlateCount, this.depthDirty) then
-      this.depthDirty = nil
-      UpdateNameplateDepthLayers()
-    end
-    if cost then zNameplates.EndPlateCost("zNP depth ordering and layers",cost,generation,visiblePlateCount) end
-
-    if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
     zNameplates.UpdateStickyPlacements(now, visiblePlates, ShouldOverlap, frameState.targetGuid, frameState.mouseoverGuid)
     if cost then zNameplates.EndPlateCost("zNP layout and projection",cost,generation,visiblePlateCount) end
 
@@ -1558,6 +1510,10 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
       end
     end
     if cost then zNameplates.EndPlateCost("zNP plate visual-data loop",cost,generation,visiblePlateCount) end
+    if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
+    UpdateNameplateDepthLayers(this.depthDirty)
+    this.depthDirty=nil
+    if cost then zNameplates.EndPlateCost("zNP depth ordering and layers",cost,generation,visiblePlateCount) end
     if profileStart then zNameplates.EndPlateCost("zNP full frame",profileStart,profileGeneration,visiblePlateCount) end
     zNameplates.platePerfActive=nil
   end)
@@ -2511,10 +2467,9 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
       end
     end
 
-    -- Target transition triggers immediate depth layer update
+    -- Target styling is independent of physical front-to-back ordering.
     if nameplate.istarget ~= target then
       nameplate.istarget = target
-      nameplates.depthUpdateAt = 0
     end
 
     -- queue update on visual target update

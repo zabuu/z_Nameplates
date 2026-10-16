@@ -324,6 +324,7 @@ local descriptions = {
   Preview="Test your appearance settings without a real encounter.",
   Advanced="Update rates and troubleshooting tools.",
   Profiles="Independent settings per character. Copying never changes another character.",
+  ["World timers"]="Your traps and flares, pinned to confirmed world positions. Requires zAPI 2.2.",
 }
 local sectionRules = {
   General={{"Visibility","showhostile showfriendly hide_blizzard_xp disable_hostile_in_friendly disable_friendly_in_friendly"},
@@ -390,7 +391,7 @@ local help = {
 }
 local byName = {}
 for _, page in ipairs(pages) do byName[page.name] = {name=page.name,items={}} end
-for _, name in ipairs({"Crowds","List","Preview","Profiles"}) do byName[name] = {name=name,items={}} end
+for _, name in ipairs({"Crowds","List","Preview","Profiles","World timers"}) do byName[name] = {name=name,items={}} end
 for _, page in ipairs(pages) do
   for _, item in ipairs(page.items) do
     local key = item[3] and item[3][2]
@@ -414,6 +415,17 @@ byName.List.items = {
   {"slider","List opacity",{"combatlist","opacity"},.2,1,.05,"",2},
   {"slider","List width (0 = automatic)",{"combatlist","width"},0,420,10," px"},
 }
+byName["World timers"].items={
+  {"check","Show world-space spell timers",{"groundeffects","enabled"}},
+  {"check","Show my traps",{"groundeffects","traps"}},
+  {"check","Show my flares",{"groundeffects","flares"}},
+  {"slider","Spell icon size",{"groundeffects","size"},12,48,1," px"},
+  {"slider","Spell icon opacity",{"groundeffects","opacity"},.1,1,.05,"",2},
+  {"slider","Timer font size",{"groundeffects","fontsize"},8,20,1," pt"},
+  {"slider","Height above the ground",{"groundeffects","height"},0,2,.05," yd",2},
+  {"slider","World timer scale",{"groundeffects","scale"},.5,2,.05,"x",2},
+}
+byName["World timers"].items[1].help="Requires zAPI 2.2 and confirmed cast/trigger events. Tracks only your own casts observed this session. Flare counts down to expiry; traps switch from despawn to effect duration when triggered. Timers never intercept clicks."
 table.insert(byName.Advanced.items,{"button","Dump target / mouseover layers",nil,function() if SlashCmdList.ZNPDUMP then SlashCmdList.ZNPDUMP() end end})
 byName.Profiles.items={
   {"select","Copy settings from",{"profiles","source"},{{"New-character default","@default"}},"profiles"},
@@ -423,7 +435,7 @@ byName.Profiles.items={
 }
 byName.Profiles.items[1].help="Each character keeps its own saves. Other characters appear here after logging in with this version. Copies create restore points."
 pages={}
-for _, name in ipairs({"General","Health","Cast & Auras","Text","Appearance","Chat","Threat","Distance","Crowds","List","Preview","Profiles","Advanced"}) do
+for _, name in ipairs({"General","Health","Cast & Auras","Text","Appearance","Chat","World timers","Threat","Distance","Crowds","List","Preview","Profiles","Advanced"}) do
   local page=byName[name]
   local sections=sectionRules[name] or {{"Settings",""}}
   for _, item in ipairs(page.items) do
@@ -470,6 +482,7 @@ local function DependencyEnabled(widget)
   if not path then return true end
   local key=path[table.getn(path)]
   if path[1]=="platechat" and key~="enabled" then return GetValue({"platechat","enabled"})=="1" end
+  if path[1]=="groundeffects" and key~="enabled" then return GetValue({"groundeffects","enabled"})=="1" end
   local dependencies={
     targetzoomval="targetzoom", glowcolor="targetglow", highlightcolor="targethighlight",
     hptextpos="showhp", hptextformat="showhp", targetcastbar="showcastbar", spellname="showcastbar", heightcast="showcastbar",

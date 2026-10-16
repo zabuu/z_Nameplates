@@ -96,11 +96,11 @@ assert(math.abs(db.operations["zNP native anchor projection"].totalMs-1.8)<.0001
 assert(math.abs(db.operations["zNP depth ordering and layers"].totalMs-2)<.0001)
 assert(math.abs(db.operations["zNP distance sampling"].totalMs-1.2)<.0001)
 assert(math.abs(db.operations["zNP LOS raycasts"].totalMs-1.5)<.0001)
--- Exercise the alternate high-FPS visual-only branch; no scope leaks.
+-- Even the alternate high-FPS visual-only branch checks fresh depth order.
 wall=3; this.frameTick=3
 nameplates.OnUpdateScript()
 assert(not Z.platePerfActive and db.operations["zNP full frame"].calls==2)
-assert(db.operations["zNP depth ordering and layers"].calls==1)
+assert(db.operations["zNP depth ordering and layers"].calls==2)
 assert(db.operations["zNP full plate data refresh"].calls==3)
 -- Warmup and stopped capture stay free of extra timing reads/operation records.
 local before=clockReads; local recorded=db.operations["zNP full frame"].calls

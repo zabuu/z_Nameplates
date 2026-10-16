@@ -22,18 +22,28 @@ UnitIsPlayer = function(u) return units[u] ~= nil end
 ChatTypeInfo = { SAY={r=1,g=1,b=1}, GUILD={r=.25,g=1,b=.25} }
 local methods = {}
 function methods:SetScript(k,v) self.scripts[k]=v end
+function methods:GetScript(k) return self.scripts[k] end
 function methods:RegisterEvent(k) self.events[k]=true end
 function methods:Show() self.shown=true end
-function methods:Hide() self.shown=false end
+function methods:Hide()
+  local shown=self.shown
+  self.shown=false
+  if shown and self.scripts.OnHide then
+    local previous=this; this=self; self.scripts.OnHide(); this=previous
+  end
+end
 function methods:IsShown() return self.shown end
-function methods:IsVisible() return self.shown end
+function methods:IsVisible() return self.shown and (not self.parent or self.parent:IsVisible()) end
 function methods:SetFrameStrata(v) self.strata=v end
 function methods:GetFrameStrata() return self.strata or "BACKGROUND" end
 function methods:SetFrameLevel(v) self.level=v end
 function methods:GetFrameLevel() return self.level or 4 end
 function methods:SetAlpha(v) self.alpha=v end
 function methods:GetAlpha() return self.alpha or 1 end
+function methods:GetEffectiveAlpha() return self:GetAlpha() * (self.parent and self.parent:GetEffectiveAlpha() or 1) end
 function methods:SetScale(v) self.scale=v end
+function methods:GetScale() return self.scale or 1 end
+function methods:GetEffectiveScale() return self:GetScale() * (self.parent and self.parent:GetEffectiveScale() or 1) end
 function methods:SetWidth(v) self.width=v end
 function methods:SetHeight(v) self.height=v end
 function methods:GetWidth() return self.width or 1000 end
@@ -69,6 +79,8 @@ zNameplates.GetStringColor=function(value)
   return tonumber(r),tonumber(g),tonumber(b),tonumber(a)
 end
 base=CreateFrame("Frame")
+previousHideCalls=0
+base:SetScript("OnHide",function() previousHideCalls=previousHideCalls+1 end)
 plate=CreateFrame("Frame",nil,base)
 plate.unit="enemy"
 plate.name=plate:CreateFontString()
@@ -84,6 +96,9 @@ function tick(t)
   this=zNameplatesChatWatcher
   this.scripts.OnUpdate()
 end
+function visual(label)
+  local previous=this; this=label; label.scripts.OnUpdate(); this=previous
+end
 ''')
 lua.execute((root / "chat.lua").read_text(encoding="utf-8-sig"))
 lua.execute(r'''
@@ -92,7 +107,7 @@ zNameplates.RefreshPlateChat()
 assert(cvars.chatBubbles=="0" and cvars.chatBubblesParty=="0")
 fire("CHAT_MSG_GUILD","Hello","Bob")
 tick(0)
-label=plate.children[2]
+label=plate.chatLabel
 assert(label and label.shown and label.text.value=="Hello")
 assert(not label.pointer and #label.background==9)
 assert(label.background[1].color[4]==.35)
@@ -100,6 +115,48 @@ assert(label.width==42 and label.height==22)
 assert(label.text.color[1]==.25 and label.text.color[2]==1)
 assert(label.level>plate:GetFrameLevel() and label.strata==plate:GetFrameStrata())
 assert(label.point[1]=="LEFT" and label.point[3]=="RIGHT" and not label.mouse)
+-- Chat alpha is independent of both the overlay and its native parent.
+assert(label.parent==UIParent)
+base:SetAlpha(.2); plate:SetAlpha(0)
+visual(label)
+assert(label.shown and label:GetEffectiveAlpha()==1)
+base:SetScale(.9); UIParent:SetScale(.8); plate:SetScale(.6)
+zNameplates.config.platechat.scale="1.25"
+zNameplates.config.platechat.opacity=".8"
+tick(.1)
+assert(math.abs(label:GetEffectiveScale()-plate:GetEffectiveScale()*1.25)<.000001)
+assert(label:GetEffectiveAlpha()==.8)
+-- Copy floating-point depth scale even between throttled message updates.
+plate:SetScale(.53217)
+visual(label)
+assert(math.abs(label:GetEffectiveScale()-plate:GetEffectiveScale()*1.25)<.000001)
+assert(label:GetEffectiveAlpha()==.8)
+-- Detached bubbles still hide immediately with their native/overlay owner.
+base:Hide()
+assert(not label.shown and previousHideCalls==1)
+base:Show(); tick(.2)
+assert(label.shown)
+plate:Hide()
+assert(not label.shown)
+plate:Show(); tick(.3)
+plate.worldPlacementHidden=true; visual(label)
+assert(not label.shown)
+tick(.4)
+assert(not label.shown)
+plate.worldPlacementHidden=nil; tick(.5)
+assert(label.shown)
+plate.clusterHidden=true; visual(label)
+assert(not label.shown)
+plate.clusterHidden=nil; tick(.6)
+assert(label.shown)
+plate.cachedGuid="0x03"; visual(label)
+assert(not label.shown)
+plate.cachedGuid=nil; tick(.7)
+assert(label.shown)
+base:SetAlpha(1); plate:SetAlpha(1)
+base:SetScale(1); plate:SetScale(1); UIParent:SetScale(1)
+zNameplates.config.platechat.scale="1"
+zNameplates.config.platechat.opacity="1"
 tick(7.5)
 assert(label.alpha==.5)
 -- A recycled plate with the same name but a different GUID must not inherit it.
@@ -140,14 +197,20 @@ zAPI=function(command,unit,offset)
   if command=="unitPosition" then return 0,0,0 end
 end
 fire("CHAT_MSG_SAY","My own chat","Me")
+local rootChildrenBefore=#UIParent.children
 tick(9.1)
-assert(#UIParent.children==0)
+assert(#UIParent.children==rootChildrenBefore)
 zNameplates.config.platechat.show_without_plate="1"
 tick(9.2)
-projected=UIParent.children[1]
+for _,child in ipairs(UIParent.children) do
+  if child.chatProjectionAnchor then projected=child; break end
+end
 assert(projected and projected.shown and not projected.name.shown)
-projectedLabel=projected.children[2]
+projectedLabel=projected.chatLabel
 assert(projectedLabel.shown and projectedLabel.text.value=="My own chat")
+assert(projectedLabel.point[1]=="BOTTOM" and projectedLabel.point[3]=="TOP")
+assert(projectedLabel.point[4]==0 and projectedLabel.point[5]==10)
+assert(projectedLabel.text.align=="CENTER")
 assert(projected.point[4]==500 and projected.point[5]==480)
 -- Native projection is refreshed; off-camera speakers are hidden.
 behindCamera=true
@@ -155,9 +218,38 @@ tick(9.3)
 assert(not projected.shown and not projectedLabel.shown)
 behindCamera=false
 tick(9.4)
-assert(projected.shown and projectedLabel.shown and #UIParent.children==1)
+assert(projected.shown and projectedLabel.shown and #UIParent.children==rootChildrenBefore+2)
+-- Hidden-player speech retains distance scale, but never distance alpha.
+local N=zNameplates.config.nameplates
+N.distance_scale="1"; N.distance_alpha="1"
+N.distance_min_scale="50"; N.distance_min_alpha="20"; N.nameplate_range="41"
+local positionReads=0
+zAPI=function(command,unit,offset)
+  if command=="projectUnit" then return .5,.6,40,41,0,2 end
+  if command=="unitPosition" then
+    positionReads=positionReads+1
+    return unit=="player" and 0 or 41,0,0
+  end
+end
+-- Own speech is at zero distance; a hidden nearby player's speech is distant.
+units.target=units.enemy
+zNameplates.nameplates.visiblePlates[base]=nil
+fire("CHAT_MSG_SAY","Distant player","Bob")
+tick(9.44)
+local distant
+for _,child in ipairs(UIParent.children) do
+  if child.chatOwner and child.shown and child.text.value=="Distant player" then distant=child end
+end
+assert(distant and distant:GetEffectiveAlpha()==1)
+assert(math.abs(distant:GetEffectiveScale()-.5)<.000001)
+N.distance_scale="0"; positionReads=0
+tick(9.48)
+assert(distant:GetEffectiveScale()==1 and distant:GetEffectiveAlpha()==1)
+assert(positionReads==0) -- Alpha-only settings need no distance queries for chat.
+N.distance_alpha="0"
+zNameplates.nameplates.visiblePlates[base]=base
 zNameplates.config.platechat.show_without_plate="0"
-tick(9.5)
+tick(9.55)
 assert(not projected.shown)
 zNameplates.config.platechat.show_without_plate="1"
 tick(17.1)
@@ -221,23 +313,21 @@ for _,entry in ipairs({
   arg8=entry[1]=="CHAT_MSG_CHANNEL" and 3 or nil
   fire(entry[1],entry[1],"Bob","0x02")
   tick(clock+.1)
-  local current=plate.children[2]
+  local current=plate.chatLabel
   assert(current.shown and current.text.value==entry[1],entry[1])
   assert(current.text.color[1]==.2 and current.text.color[3]==.6,entry[1])
 end
 -- Realm-qualified player names bind to the same nearby GUID.
 fire("CHAT_MSG_RAID","Realm-qualified","Bob-OtherRealm","0x02")
 tick(clock+.1)
-assert(plate.children[2].text.value=="Realm-qualified")
+assert(plate.chatLabel.text.value=="Realm-qualified")
 -- Outgoing whispers are speech by the player, not by the recipient.
 C.show_without_plate="1"
 fire("CHAT_MSG_WHISPER_INFORM","Outgoing whisper","Bob","0x02")
 tick(clock+.1)
 local found=false
 for _,p in ipairs(UIParent.children) do
-  for _,child in ipairs(p.children) do
-    if child.text and child.shown and child.text.value=="Outgoing whisper" then found=true end
-  end
+  if p.text and p.shown and p.text.value=="Outgoing whisper" then found=true end
 end
 assert(found)
 -- Numbered/custom channels are deliberately unsupported even with old settings.
@@ -245,7 +335,7 @@ C.channel="1"
 assert(not zNameplatesChatWatcher.events.CHAT_MSG_CHANNEL)
 fire("CHAT_MSG_CHANNEL","Filtered channel","Bob","0x02")
 tick(clock+.1)
-assert(plate.children[2].text.value~="Filtered channel")
+assert(plate.chatLabel.text.value~="Filtered channel")
 -- Actual native frames are suppressed even if a client/skin ignores the CVars.
 nativeBubble=CreateFrame("Frame")
 nativeBubble:SetAlpha(.8)
@@ -260,5 +350,21 @@ C.enabled="0"; zNameplates.RefreshPlateChat()
 assert(nativeBubble.alpha==.8)
 C.enabled="1"; zNameplates.RefreshPlateChat()
 assert(nativeBubble.alpha==0)
+-- Forced own speech always uses the real overhead anchor, even with a visible
+-- self plate and a general LEFT placement with large custom offsets.
+C.position="LEFT"; C.x="-150"; C.y="-40"; C.show_without_plate="1"
+local selfBase=CreateFrame("Frame")
+selfBase.nameplate=CreateFrame("Frame",nil,selfBase)
+selfBase.nameplate.unit="player"; selfBase.nameplate.name=selfBase.nameplate:CreateFontString()
+zNameplates.nameplates.visiblePlates[selfBase]=selfBase
+local nameAttachmentCalls=0
+zAPI=function(command,unit)
+ if command=="projectNameplate" and unit=="player" then nameAttachmentCalls=nameAttachmentCalls+1; return .5,.8,10,0,0,2 end
+end
+fire("CHAT_MSG_SAY","Over my head","Me","0x01"); tick(clock+.1)
+local own
+for _,child in ipairs(UIParent.children) do if child.text and child.shown and child.text.value=="Over my head" then own=child end end
+assert(own and own.point[1]=="BOTTOM" and own.point[3]=="TOP" and own.point[4]==0 and own.point[5]==10)
+assert(own.text.align=="CENTER" and nameAttachmentCalls==1 and not selfBase.nameplate.chatLabel)
 ''')
-print("Lua syntax, all supported chat channels, colours, and speaker matching passed.")
+print("Lua syntax, chat visibility/scale/lifetime, supported channels, and speaker matching passed.")

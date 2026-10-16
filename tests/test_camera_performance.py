@@ -76,6 +76,7 @@ end
 lua = LuaRuntime(unpack_returned_tuples=True)
 lua.execute(bootstrap("test_plate_layers.py"))
 lua.execute("Z=zNameplates\n" + rank_source)
+lua.execute(core[core.index("function Z.ShouldUpdatePlateDepth("):core.index("function Z.AssignStablePlateDepthRanks(")])
 lua.execute((root / "layers.lua").read_text(encoding="utf-8-sig"))
 lua.execute('''
 visiblePlates={}; visiblePlateCount=0; pack={}; frameState={now=0}
@@ -93,6 +94,7 @@ for i=1,30 do
  p.textframe=frame(p); p.name={zSmoothFrame=frame(p.textframe)}
  p.guild={zSmoothFrame=frame(p.textframe)}; p.level={zSmoothFrame=frame(p.textframe)}
  p.castbar=frame(p.health); p.debuffs={frame(p)}; p.debuffs[1].cd=frame(p.debuffs[1])
+ p.debuffs[1].cd.zText=frame(p.debuffs[1]); p.chatLabel=frame(p)
  p.raidiconframe=frame(p); p.clusterCountFrame=frame(native)
  function p:GetLeft() return self.screenX-50 end
  function p:GetRight() return self.screenX+50 end
@@ -101,7 +103,7 @@ for i=1,30 do
  visiblePlates[native]=native; pack[i]=p
 end
 ''')
-depth_source = plates[plates.index("  local function UpdateNameplateDepthLayers()"):
+depth_source = plates[plates.index("  local function UpdateNameplateDepthLayers("):
                       plates.index("  local function SaveVisualColor(")]
 lua.execute(depth_source + "\nupdateDepth=UpdateNameplateDepthLayers")
 lua.execute('''
@@ -121,16 +123,29 @@ for _,p in ipairs(pack) do
  if saved[p][1]~=p.cachedStrata or saved[p][2]~=p.cachedBaseLevel then changed=changed+1 end
 end
 assert(changed==2,"a two-plate crossing reshuffled "..changed.." plates")
--- Screen-overlap promotion and target priority still run with stable slots.
+-- Screen overlap and target selection must not override true camera depth.
 pack[29].screenX=pack[30].screenX
 frameState.now=2.1; updateDepth()
 local front,back=pack[29],pack[30]
-assert(front.depth<back.depth and front.cachedStrata~="BACKGROUND")
+assert(front.depth<back.depth and front.depthLayerRank>back.depthLayerRank)
 before=writes; frameState.now=2.2; updateDepth(); assert(writes==before)
 local old=back.cachedStrata; back.istarget=true; frameState.now=2.3; updateDepth()
-assert(back.cachedStrata~=old)
+assert(back.cachedStrata==old and writes==before)
 back.istarget=nil; pack[29].screenX=pack[29].screenX+200
 frameState.now=2.4; updateDepth()
+assert(writes==before)
+-- Complete layer bands never interleave, even at adjacent rank slots.
+local strata={BACKGROUND=1,LOW=2,MEDIUM=3,HIGH=4,DIALOG=5}
+for rank=1,99 do
+ local a,baseA=Z.GetPlateDepthLayer(rank)
+ local b,baseB=Z.GetPlateDepthLayer(rank+1)
+ assert(baseA+11<255 and baseB+11<255)
+ assert(strata[a]<strata[b] or (a==b and baseA+11<baseB))
+end
+for _,p in ipairs(pack) do
+ assert(p.chatLabel:GetFrameLevel()==p.cachedBaseLevel+11)
+ assert(p.debuffs[1].cd.zText:GetFrameLevel()==p.cachedBaseLevel+6)
+end
 ''')
 
 # Run actual projection/solver/transition code at 120 FPS. Only one point clear
