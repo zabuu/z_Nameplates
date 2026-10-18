@@ -270,7 +270,10 @@ function zNameplates.StartNameplates()
 
   local function GetCombatStateColor(guid, token)
     -- PERF: Quick exit if player not in combat
-    if not UnitAffectingCombat("player") then return false end
+    local playerCombat
+    if zNameplates.GetPlayerCombatState then playerCombat = zNameplates.GetPlayerCombatState()
+    else playerCombat = UnitAffectingCombat("player") end
+    if not playerCombat then return false end
     if not token or not UnitExists(token) then return false end
     if UnitCanAssist("player", token) then return false end
 
@@ -1135,8 +1138,16 @@ nameplates:RegisterEvent("UNIT_SPELLCAST_STOP")
 nameplates:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
 nameplates:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
+nameplates:RegisterEvent("PLAYER_REGEN_DISABLED")
+nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
   
   nameplates:SetScript("OnEvent", function()
+    -- Combat events may arrive between consumers at the same GetTime value.
+    -- Share reads within a frame, never a pre-transition combat sample.
+    if event == "PLAYER_REGEN_DISABLED" or event == "PLAYER_REGEN_ENABLED"
+        or event == "PLAYER_ENTERING_WORLD" or (event == "UNIT_FLAGS" and arg1 == "player") then
+      zNameplates.playerCombatTime = nil
+    end
     -- Stop event handling during logout to prevent crash 132
     if event == "PLAYER_LOGOUT" then
       this:UnregisterAllEvents()
@@ -1524,6 +1535,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
   nameplates.combat:RegisterEvent("PLAYER_LEAVE_COMBAT")
   nameplates.combat:RegisterEvent("PLAYER_LOGOUT")
   nameplates.combat:SetScript("OnEvent", function()
+    zNameplates.playerCombatTime = nil
     if event == "PLAYER_LOGOUT" then
       this:UnregisterAllEvents()
       this:SetScript("OnEvent", nil)
@@ -2496,10 +2508,7 @@ nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
 
     -- Another player's tap owns the dark-gray name state. Neutral names keep
     -- reaction yellow; all other plates may still use the configured combat tint.
-    local unit = nameplate.unit
-    local inCombatWithPlayer = cfg.namefightcolor and unit and UnitExists(unit) and
-      UnitAffectingCombat(unit) and UnitAffectingCombat("player") or nil
-    local combatNameOverride = zNameplates.ShouldUseCombatNameColor(nameplate, inCombatWithPlayer)
+    local combatNameOverride = zNameplates.ShouldUseCombatNameColor(nameplate, cfg.namefightcolor, frameState.now)
     if nameplate.cache.inCombat ~= combatNameOverride then
       nameplate.cache.inCombat = combatNameOverride
       if combatNameOverride then

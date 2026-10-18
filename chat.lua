@@ -34,6 +34,47 @@ local anchors = {
 local strata = {BACKGROUND=true, LOW=true, MEDIUM=true, HIGH=true,
   DIALOG=true, FULLSCREEN=true, FULLSCREEN_DIALOG=true, TOOLTIP=true}
 
+local function HideChatLabel(label)
+  if label:IsShown() then label:Hide() end
+  label.chatLayoutDirty = true
+end
+
+local function SetChatScale(frame, scale)
+  if frame.chatAppliedScale ~= scale or math.abs(frame:GetScale() - scale) > .000001 then
+    frame:SetScale(scale)
+    frame.chatAppliedScale = scale
+  end
+end
+
+local function SetChatAlpha(frame, alpha)
+  -- The client quantizes alpha. Compare with the read-back value, not an
+  -- unrepresentable requested fraction that would cause a write every tick.
+  if frame.chatAppliedAlpha ~= alpha or frame:GetAlpha() ~= frame.chatActualAlpha then
+    frame:SetAlpha(alpha)
+    frame.chatAppliedAlpha, frame.chatActualAlpha = alpha, frame:GetAlpha()
+  end
+end
+
+local function SetChatPoint(frame, point, relative, relativePoint, x, y)
+  local relationship = frame.chatPointAnchor ~= point or frame.chatPointRelative ~= relative
+    or frame.chatPointRelativeAnchor ~= relativePoint
+  local coordinates = frame.chatPointX ~= x or frame.chatPointY ~= y
+  if frame.GetPoint then
+    local p, r, rp, px, py = frame:GetPoint(1)
+    relationship = relationship or p ~= point or r ~= relative or rp ~= relativePoint
+      or (frame.GetNumPoints and frame:GetNumPoints() ~= 1)
+    coordinates = coordinates or not px or not py or math.abs(px-x) > .001 or math.abs(py-y) > .001
+  end
+  if relationship then frame:ClearAllPoints() end
+  if relationship or coordinates then
+    -- Replacing the same named anchor also updates moving projected positions;
+    -- only a changed relationship needs ClearAllPoints.
+    frame:SetPoint(point, relative, relativePoint, x, y)
+    frame.chatPointAnchor, frame.chatPointRelative, frame.chatPointRelativeAnchor = point, relative, relativePoint
+    frame.chatPointX, frame.chatPointY = x, y
+  end
+end
+
 local function SpeakerKey(name)
   if type(name) ~= "string" then return nil end
   name = string.gsub(name, "|c%x%x%x%x%x%x%x%x", "")
@@ -85,8 +126,8 @@ function Z.RefreshPlateChat()
   SuppressNativeBubbleFrames(enabled)
   if not enabled then
     table.wipe(messages)
-    for _, label in pairs(labels) do label:Hide() end
-    for _, anchor in pairs(projectedAnchors) do anchor:Hide() end
+    for _, label in pairs(labels) do HideChatLabel(label) end
+    for _, anchor in pairs(projectedAnchors) do HideChatLabel(anchor) end
     watcher:Hide()
   else
     watcher:Show()
@@ -167,44 +208,65 @@ local function ProjectChatAnchor(message, index)
     anchor.chatProjectionAnchor = true
     projectedAnchors[index] = anchor
   end
-  anchor:SetFrameStrata("HIGH")
-  anchor:SetFrameLevel(10)
-  anchor:SetScale(scale)
-  anchor:SetAlpha(1)
-  anchor:ClearAllPoints()
-  anchor:SetPoint("CENTER", UIParent, "BOTTOMLEFT",
+  if anchor:GetFrameStrata() ~= "HIGH" then anchor:SetFrameStrata("HIGH") end
+  if anchor:GetFrameLevel() ~= 10 then anchor:SetFrameLevel(10) end
+  SetChatScale(anchor, scale)
+  SetChatAlpha(anchor, 1)
+  SetChatPoint(anchor, "CENTER", UIParent, "BOTTOMLEFT",
     x * UIParent:GetWidth() / scale, y * UIParent:GetHeight() / scale)
   local friendly = UnitCanAssist and UnitCanAssist("player", unit)
   local size = tonumber(friendly and N.name.fontsize_friendly or N.name.fontsize) or 10
   local font = N.use_unitfonts == "1" and Z.font_unit or Z.font_default
-  anchor.name:SetFont(font, size, "")
-  anchor.name:SetText(message.sender)
-  anchor:Show()
+  local fontChanged = anchor.chatNameObject ~= anchor.name or anchor.chatNameFont ~= font or anchor.chatNameSize ~= size
+  if anchor.name.GetFont then
+    local f, s, flags = anchor.name:GetFont()
+    fontChanged = fontChanged or f ~= font or s ~= size or (flags or "") ~= ""
+  end
+  if fontChanged then
+    anchor.name:SetFont(font, size, "")
+    anchor.chatNameFont, anchor.chatNameSize = font, size
+  end
+  if anchor.chatNameObject ~= anchor.name or anchor.chatNameText ~= message.sender
+      or (anchor.name.GetText and anchor.name:GetText() ~= message.sender) then
+    anchor.name:SetText(message.sender)
+    anchor.chatNameText = message.sender
+  end
+  anchor.chatNameObject = anchor.name
+  if not anchor:IsShown() then anchor:Show() end
   return anchor
 end
 
-local function RoundedBackground(label, width, height, C)
+local function RoundedBackground(label, width, height, C, force)
   -- Vanilla has no texture masks: non-overlapping strips describe a four-pixel
   -- circular corner, keeping translucent edges the same shade as the centre.
   local radius = 4
-  local r, g, b = Z.GetStringColor(C.background_color or ".04,.04,.04,1")
+  local color = C.background_color or ".04,.04,.04,1"
   local opacity = math.max(0, math.min(1, tonumber(C.background_opacity) or .35))
+  local geometry = force or label.chatBackgroundWidth ~= width or label.chatBackgroundHeight ~= height
+  local tint = force or label.chatBackgroundColor ~= color or label.chatBackgroundOpacity ~= opacity
+  if not geometry and not tint then return end
+  local r, g, b
+  if tint then r, g, b = Z.GetStringColor(color) end
   for i = 1, 9 do
     local piece = label.background[i]
-    local inset, top, stripHeight = 0, radius, height - radius * 2
-    if i > 1 then
-      local row = math.mod(i - 2, radius)
-      local dy = radius - row - .5
-      inset = radius - math.sqrt(radius * radius - dy * dy)
-      top = i <= 5 and row or height - row - 1
-      stripHeight = 1
+    if geometry then
+      local inset, top, stripHeight = 0, radius, height - radius * 2
+      if i > 1 then
+        local row = math.mod(i - 2, radius)
+        local dy = radius - row - .5
+        inset = radius - math.sqrt(radius * radius - dy * dy)
+        top = i <= 5 and row or height - row - 1
+        stripHeight = 1
+      end
+      piece:ClearAllPoints()
+      piece:SetPoint("TOPLEFT", label, "TOPLEFT", inset, -top)
+      piece:SetWidth(width - inset * 2)
+      piece:SetHeight(stripHeight)
     end
-    piece:ClearAllPoints()
-    piece:SetPoint("TOPLEFT", label, "TOPLEFT", inset, -top)
-    piece:SetWidth(width - inset * 2)
-    piece:SetHeight(stripHeight)
-    piece:SetVertexColor(r or .04, g or .04, b or .04, opacity)
+    if tint then piece:SetVertexColor(r or .04, g or .04, b or .04, opacity) end
   end
+  label.chatBackgroundWidth, label.chatBackgroundHeight = width, height
+  label.chatBackgroundColor, label.chatBackgroundOpacity = color, opacity
 end
 
 local function UpdateChatVisual(label)
@@ -213,11 +275,11 @@ local function UpdateChatVisual(label)
   -- plate or overlay. Explicitly keep their lifetime tied to that same owner.
   if not plate:IsVisible() or plate.worldPlacementHidden or plate.clusterHidden
       or label.ownerIdentity ~= (plate.cachedGuid or plate.unit) then
-    label:Hide()
+    HideChatLabel(label)
     return
   end
   local scale = plate:GetEffectiveScale() / UIParent:GetEffectiveScale() * label.chatScale
-  if label:GetScale() ~= scale then label:SetScale(scale) end
+  SetChatScale(label, scale)
 end
 
 local function ChatOnUpdate()
@@ -228,9 +290,14 @@ end
 
 local function HideChatWith(frame, label)
   if not frame then return end
+  local owners = label.chatHideOwners
+  if not owners then owners = setmetatable({}, {__mode="k"}); label.chatHideOwners = owners end
+  if owners[frame] then return end
+  owners[frame] = true
   local previousHide = frame:GetScript("OnHide")
   frame:SetScript("OnHide", function()
-    label:Hide()
+    -- An old native parent can disappear after this plate was reparented.
+    if label.chatOwner == frame or label.chatOwner.parent == frame then HideChatLabel(label) end
     if previousHide then previousHide(frame) end
   end)
 end
@@ -243,6 +310,7 @@ local function RenderMessage(plate, message, now)
     -- its configured opacity even when its nameplate is completely faded.
     label = CreateFrame("Frame", nil, UIParent)
     label.chatOwner = plate
+    label.chatLayoutDirty = true
     label:SetScript("OnUpdate", ChatOnUpdate)
     HideChatWith(plate, label)
     if not plate.chatProjectionAnchor then HideChatWith(plate.parent, label) end
@@ -260,48 +328,97 @@ local function RenderMessage(plate, message, now)
     plate.layersDirty=true
   end
   local layer = plate:GetFrameStrata()
-  label:SetFrameStrata(strata[layer] and layer or "HIGH")
+  layer = strata[layer] and layer or "HIGH"
+  if label:GetFrameStrata() ~= layer then label:SetFrameStrata(layer) end
   -- Above this plate's text/badge, but inside its depth band so a farther
   -- speaker's bubble cannot jump in front of a genuinely nearer plate.
-  label:SetFrameLevel(plate:GetFrameLevel() + 10)
+  local level = plate:GetFrameLevel() + 10
+  if label:GetFrameLevel() ~= level then label:SetFrameLevel(level) end
+  if label.GetParent and label:GetParent() ~= UIParent then
+    label:SetParent(UIParent)
+    label.chatLayoutDirty = true
+  end
+  if not plate.chatProjectionAnchor then HideChatWith(plate.parent, label) end
   label.chatScale = tonumber(C.scale) or 1
   label.ownerIdentity = plate.cachedGuid or plate.unit
+  label.chatRenderSerial = watcher.chatRenderSerial
+  if plate.chatProjectionAnchor then plate.chatRenderSerial = watcher.chatRenderSerial end
   local width = tonumber(C.width) or 220
   local size = tonumber(C.fontsize) or 12
   local font = Z.config.nameplates.use_unitfonts == "1" and Z.font_unit or Z.font_default
+  local fontstyle = C.fontstyle or "OUTLINE"
   local position = C.position or "RIGHT"
   local ownOverhead = C.show_without_plate == "1" and IsOwnMessage(message)
   if ownOverhead then position = "TOP" end
   local anchor = anchors[position] or anchors.RIGHT
-  label:ClearAllPoints()
-  label:SetPoint(anchor[1], plate.name, anchor[2],
+  SetChatPoint(label, anchor[1], plate.name, anchor[2],
     ownOverhead and 0 or tonumber(C.x) or 6, ownOverhead and 10 or tonumber(C.y) or 0)
-  label.text:SetWidth(width)
-  label.text:SetHeight(0)
-  label.text:SetFont(font, size, C.fontstyle or "OUTLINE")
-  label.text:SetJustifyH(position == "LEFT" and "RIGHT" or
-    (position == "RIGHT" and "LEFT" or "CENTER"))
-  label.text:SetJustifyV("MIDDLE")
-  if label.message ~= message or label.position ~= position then
-    label.text:SetText(message.text)
-    label.message, label.position = message, position
+  local fontChanged = label.chatTextObject ~= label.text or label.chatFont ~= font
+    or label.chatFontSize ~= size or label.chatFontStyle ~= fontstyle
+  if label.text.GetFont then
+    local f, s, flags = label.text:GetFont()
+    fontChanged = fontChanged or f ~= font or s ~= size or (flags or "") ~= fontstyle
   end
-  -- Hug short messages instead of filling the configured maximum wrap width.
-  local contentWidth = math.max(1, math.min(width, label.text:GetStringWidth()))
-  label.text:SetWidth(contentWidth)
-  local height = math.max(size, label.text:GetStringHeight()) + 8
-  label:SetWidth(contentWidth + 12)
-  label:SetHeight(height)
-  RoundedBackground(label, contentWidth + 12, height, C)
+  local textChanged = label.chatTextObject ~= label.text or label.chatText ~= message.text
+    or (label.text.GetText and label.text:GetText() ~= message.text)
+  local layout = label.chatLayoutDirty or fontChanged or textChanged or label.chatWrapWidth ~= width
+    or (label.chatWidth and math.abs(label:GetWidth()-label.chatWidth) > .001)
+    or (label.chatHeight and math.abs(label:GetHeight()-label.chatHeight) > .001)
+  if layout then
+    label.text:SetWidth(width)
+    label.text:SetHeight(0)
+    if fontChanged then label.text:SetFont(font, size, fontstyle) end
+    if textChanged then label.text:SetText(message.text) end
+    -- Hug short messages; recompute wrapping only after a content/font change.
+    local contentWidth = math.max(1, math.min(width, label.text:GetStringWidth()))
+    label.text:SetWidth(contentWidth)
+    local height = math.max(size, label.text:GetStringHeight()) + 8
+    label:SetWidth(contentWidth + 12)
+    label:SetHeight(height)
+    label.chatWidth, label.chatHeight = contentWidth + 12, height
+    label.chatFont, label.chatFontSize, label.chatFontStyle = font, size, fontstyle
+    label.chatWrapWidth, label.chatTextObject, label.chatText = width, label.text, message.text
+  end
+  local justify = position == "LEFT" and "RIGHT" or (position == "RIGHT" and "LEFT" or "CENTER")
+  if label.chatLayoutDirty or label.chatJustify ~= justify then
+    label.text:SetJustifyH(justify)
+    label.text:SetJustifyV("MIDDLE")
+    label.chatJustify = justify
+  end
+  label.message, label.position = message, position
+  RoundedBackground(label, label.chatWidth, label.chatHeight, C, label.chatLayoutDirty)
   local color = ChatTypeInfo and ChatTypeInfo[message.channel]
-  label.text:SetTextColor(color and color.r or 1, color and color.g or 1,
-    color and color.b or 1, 1)
+  local r, g, b = color and color.r or 1, color and color.g or 1, color and color.b or 1
+  local recolor = label.chatLayoutDirty or label.chatColorObject ~= label.text
+    or label.chatR ~= r or label.chatG ~= g or label.chatB ~= b
+  if label.text.GetTextColor then
+    local ar, ag, ab, aa = label.text:GetTextColor()
+    recolor = recolor or ar ~= label.chatActualR or ag ~= label.chatActualG
+      or ab ~= label.chatActualB or aa ~= label.chatActualA
+  end
+  if recolor then
+    label.text:SetTextColor(r, g, b, 1)
+    label.chatColorObject, label.chatR, label.chatG, label.chatB = label.text, r, g, b
+    if label.text.GetTextColor then
+      label.chatActualR, label.chatActualG, label.chatActualB, label.chatActualA = label.text:GetTextColor()
+    end
+  end
+  label.chatLayoutDirty = nil
   local remaining = message.time + (tonumber(C.duration) or 8) - now
   local fade = math.min(tonumber(C.fade) or 1, tonumber(C.duration) or 8)
-  label:SetAlpha((tonumber(C.opacity) or 1) *
+  SetChatAlpha(label, (tonumber(C.opacity) or 1) *
     (fade > 0 and math.min(1, math.max(0, remaining / fade)) or 1))
-  label:Show()
+  if not label:IsShown() then label:Show() end
   UpdateChatVisual(label)
+end
+
+local function HideUnusedChat(serial)
+  for _, label in pairs(labels) do
+    if label.chatRenderSerial ~= serial then HideChatLabel(label) end
+  end
+  for _, anchor in pairs(projectedAnchors) do
+    if anchor.chatRenderSerial ~= serial then HideChatLabel(anchor) end
+  end
 end
 
 watcher:SetScript("OnEvent", function()
@@ -347,9 +464,8 @@ watcher:SetScript("OnUpdate", function()
     this.cvarTick = now
     SuppressDefaultBubbles(true)
   end
-  for _, label in pairs(labels) do label:Hide() end
-  for _, anchor in pairs(projectedAnchors) do anchor:Hide() end
-  if not next(messages) then return end
+  this.chatRenderSerial = (this.chatRenderSerial or 0) + 1
+  if not next(messages) then HideUnusedChat(this.chatRenderSerial); return end
   local projectedCount = 0
   table.wipe(speakers)
   local speakerCount = 0
@@ -399,6 +515,7 @@ watcher:SetScript("OnUpdate", function()
       end
     end
   end
+  HideUnusedChat(this.chatRenderSerial)
 end)
 
 for eventName in pairs(channels) do pcall(watcher.RegisterEvent, watcher, eventName) end

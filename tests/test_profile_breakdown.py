@@ -14,6 +14,7 @@ if not recorder.is_file():
 lua = LuaRuntime(unpack_returned_tuples=True)
 lua.execute('''
 wall=1; clockReads=0; running=false; inWorld=true; warmUntil=0; captureSerial=1
+thresholdMs=50 -- The sliced optional recorder does not include its module locals.
 clock=function() clockReads=clockReads+1; return wall end
 GetTime=function() return wall end
 P={}; OctoPerf=P; max=math.max; db={operations={}}

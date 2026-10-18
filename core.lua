@@ -368,11 +368,13 @@ function Z.SetSmoothFontString(text, font, size, flags)
   if factor == 2 and text.zSmoothTextHeight ~= size then text:SetTextHeight(size); text.zSmoothTextHeight = size end
 end
 
-function Z.ShouldUseCombatNameColor(plate, enabled)
+function Z.ShouldUseCombatNameColor(plate, enabled, now)
   local unit = plate.unit
-  return enabled and not plate.isFriendly and not plate.isNeutral and not plate.taggedByOther
-    and unit and UnitExists(unit) and UnitCanAttack("player", unit)
-    and UnitAffectingCombat(unit) and UnitAffectingCombat("player") or nil
+  if not enabled or plate.isFriendly or plate.isNeutral or plate.taggedByOther
+      or not unit or not UnitExists(unit) or not UnitCanAttack("player", unit)
+      or not UnitAffectingCombat(unit) then return nil end
+  if Z.GetPlayerCombatState then return Z.GetPlayerCombatState(now) or nil end
+  return UnitAffectingCombat("player") or nil
 end
 
 local function PlateMouseFocusKind(frame)

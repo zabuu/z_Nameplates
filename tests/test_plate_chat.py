@@ -113,7 +113,7 @@ assert(not label.pointer and #label.background==9)
 assert(label.background[1].color[4]==.35)
 assert(label.width==42 and label.height==22)
 assert(label.text.color[1]==.25 and label.text.color[2]==1)
-assert(label.level>plate:GetFrameLevel() and label.strata==plate:GetFrameStrata())
+assert(label:GetFrameLevel()>plate:GetFrameLevel() and label:GetFrameStrata()==plate:GetFrameStrata())
 assert(label.point[1]=="LEFT" and label.point[3]=="RIGHT" and not label.mouse)
 -- Chat alpha is independent of both the overlay and its native parent.
 assert(label.parent==UIParent)

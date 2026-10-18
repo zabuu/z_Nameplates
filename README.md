@@ -263,6 +263,45 @@ When forced self-chat is enabled, your own messages are centred above the
 character's head, using the real model name attachment when available. General
 left/right placement and chat X/Y offsets continue to apply to other speakers.
 
+## Conservative performance pass (October 17, 2026)
+
+Local pre-change Git checkpoint: `backup/znp-pre-perf-2026-10-17`, commit
+`511f5b8589229811fa65c6419e4228103649da84`. The checkpoint was not pushed.
+
+The avoidance solver reuses its ordering comparator and one distance comparator
+per placement state. Each comparator reads that state's current position;
+hover priority, equal-distance ordering, the 32-neighbor cap, separate collision
+families, preview scenes and the solver's existing cadence are unchanged.
+
+Chat caches text measurements, rounded-background geometry, colours and stable
+anchors instead of hiding/re-showing and rebuilding unchanged bubbles. Content,
+fonts, wrapping, settings, identity/visibility changes and reparenting still
+invalidate the necessary properties. Moving projected coordinates, owner scaling,
+channel colours, independent opacity and message fade/expiry continue to update.
+Player combat queries share the existing timestamp/API cache; combat, player-flag
+and entering-world events invalidate it immediately, even within one timestamp.
+
+Mocked-client call counts against that checkpoint (not FPS measurements):
+
+- 40 plates, 20 solves after warm-up: 820 new sort comparators -> 0;
+  all 840 projection calls, including warm-up, remain.
+- One unchanged bubble, 25 updates: 1,525 UI writes and 50 text measurements -> 0.
+- One unchanged forced bubble, 25 updates: 1,800 UI writes -> 0;
+  all 25 native projection calls remain.
+- 100 combat-colour consumers at one timestamp: 100 player combat reads -> 1.
+
+The regression tests cover dynamic motion and invalidation, not just the warm
+case. The profiler-breakdown test also initializes the newer optional recorder's
+threshold in its mock; production recorder code is untouched. No visual/native
+projection cadence, depth-crossing checks, native suppression, input handling,
+world timers, zDNumbers or native DLLs were changed by this pass.
+
+Use `/reload` to load the Lua changes. In-game checks still needed: crowded-town
+camera movement/FPS, hovered avoidance and dummy scenes, combat transitions and
+chat settings/hidden-player speech. Existing diagnostics attributing particular
+mail/gossip hitches to native frame calls are separate; these changes do not prove
+those stalls, or other frame drops, have been eliminated.
+
 ## World timers
 
 The **World timers** settings page enables compact markers for your own hunter

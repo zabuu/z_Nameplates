@@ -6,6 +6,23 @@ local entries = {}
 local avoidanceEntries = {}
 local identities = {}
 
+local function AvoidanceOrder(a,b)
+  if a.hovered~=b.hovered then return a.hovered end
+  return a.order<b.order
+end
+
+local function NeighborOrder(state)
+  -- Own the comparator with the placement state, not a mutable global sort
+  -- context. Read current coordinates: the solver moves entries in-place.
+  return function(a,b)
+    if a.hovered~=b.hovered then return a.hovered end
+    local da=(state.x-a.x)^2+(state.y-a.y)^2
+    local db=(state.x-b.x)^2+(state.y-b.y)^2
+    if da==db then return a.order<b.order end
+    return da<db
+  end
+end
+
 local function Intersects(a, x, y, b, padding)
   return math.abs(x-b.x) < (a.w+b.w)*.5 + padding
     and math.abs(y-b.y) < (a.h+b.h)*.5 + padding
@@ -235,10 +252,7 @@ local function UpdateStickyPlacements(now, visible, shouldOverlap, targetGuid, h
   end
   if now<nextSolve then return end
   nextSolve=now+.05
-  table.sort(avoidanceEntries,function(a,b)
-    if a.hovered~=b.hovered then return a.hovered end
-    return a.order<b.order
-  end)
+  table.sort(avoidanceEntries,AvoidanceOrder)
   local delay = math.max(.05,math.min(.5,tonumber(C.sticky_delay) or .15))
   local maximum=math.max(32,math.min(180,tonumber(C.sticky_max_displacement) or 96))
   for i=1,avoidanceCount do
@@ -254,13 +268,8 @@ local function UpdateStickyPlacements(now, visible, shouldOverlap, targetGuid, h
       end
     end
     for j=#nearby,n+1,-1 do nearby[j]=nil end
-    table.sort(nearby,function(a,b)
-      if a.hovered~=b.hovered then return a.hovered end
-      local da=(s.x-a.x)^2+(s.y-a.y)^2
-      local db=(s.x-b.x)^2+(s.y-b.y)^2
-      if da==db then return a.order<b.order end
-      return da<db
-    end)
+    s.neighborOrder=s.neighborOrder or NeighborOrder(s)
+    table.sort(nearby,s.neighborOrder)
     for j=#nearby,33,-1 do nearby[j]=nil end
     -- Hover ownership can persist as a crowd disappears (including native
     -- frames that fail to send Leave). It must not pin a lone plate forever
