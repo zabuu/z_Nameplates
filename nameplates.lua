@@ -124,12 +124,15 @@ function zNameplates.StartNameplates()
   -- Returns the cached struct while the cast is still active, else nil (and
   -- prunes the expired entry). Same struct shape and callers as before, minus
   -- the per-tick poll.
-  local function GetCastInfo(unit)
+  local function GetCastInfo(unit, plate, now)
     if not unit then return nil end
-    local guid = UnitGUID(unit)
+    -- Projection/layout already validates this association in the same frame.
+    -- A missing or recycled association must still resolve the live token.
+    local guid = plate and zNameplates.IsPlateUnitCurrent(plate,now)
+      and plate.cachedGuid or UnitGUID(unit)
     if not guid then return nil end
     local info = castState[guid]
-    if info and info.endTime > GetTime() then return info end
+    if info and info.endTime > (now or GetTime()) then return info end
     if info then castState[guid] = nil end
     return nil
   end
@@ -294,7 +297,7 @@ function zNameplates.StartNameplates()
     local hasTarget = mobTargetGuid and mobTargetGuid ~= NULL_GUID
     local color = false
 
-    local castInfo = GetCastInfo(token)
+    local castInfo = GetCastInfo(token, nil, now)
     local isCasting = castInfo and castInfo.endTime and now < castInfo.endTime
     local targetingPlayer = hasTarget and UnitIsUnit(target, "player")
 
@@ -715,8 +718,10 @@ function zNameplates.StartNameplates()
     if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
     zNameplates.RepairPlateTextLayers(plate, now)
     if cost then zNameplates.EndPlateCost("zNP text layer guard",cost,generation) end
-    local baseScale = UIParent:GetScale()
     now = now or GetTime()
+    local render=zNameplates.plateRenderContext
+    local baseScale=render and render.active and render.now==now and render.ui==UIParent
+      and render.baseScale or UIParent:GetScale()
     local identity = plate.cachedGuid or plate.unit
     if plate.distanceScaleIdentity ~= identity then
       plate.distanceScaleIdentity = identity
@@ -1452,6 +1457,7 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
       profileStart,profileGeneration=OctoPerf.BeginOperation()
     end
     zNameplates.platePerfActive=profileStart~=nil
+    if visiblePlateCount>0 and zNameplates.BeginPlateRender then zNameplates.BeginPlateRender(now) end
     local cost,generation
     if (this.frameTick or 0) + .01 > now and not this.depthDirty then
       -- Keep motion and depth crossings on the actual render cadence while
@@ -1470,6 +1476,7 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
       if cost then zNameplates.EndPlateCost("zNP depth ordering and layers",cost,generation,visiblePlateCount) end
       if profileStart then zNameplates.EndPlateCost("zNP full frame",profileStart,profileGeneration,visiblePlateCount) end
       zNameplates.platePerfActive=nil
+      if zNameplates.EndPlateRender then zNameplates.EndPlateRender() end
       return
     end
     this.frameTick = now
@@ -1527,6 +1534,7 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
     if cost then zNameplates.EndPlateCost("zNP depth ordering and layers",cost,generation,visiblePlateCount) end
     if profileStart then zNameplates.EndPlateCost("zNP full frame",profileStart,profileGeneration,visiblePlateCount) end
     zNameplates.platePerfActive=nil
+    if zNameplates.EndPlateRender then zNameplates.EndPlateRender() end
   end)
 
   -- combat tracker
@@ -2383,7 +2391,7 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
     -- smooth animation without overloading the central loop.
     local isCastingNonTarget = not target and nameplate.castbar and nameplate.castbar:IsShown()
     if not nameplate.clusterGroup and not isCastingNonTarget and not target and cfg.showcastbar and nameplate.cachedGuid then
-      local castInfo = GetCastInfo(nameplate.unit)
+      local castInfo = GetCastInfo(nameplate.unit, nameplate, now)
       if castInfo and castInfo.endTime > now then
         isCastingNonTarget = true
       end
@@ -2640,7 +2648,7 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
   -- Shared castbar update logic (used by both dedicated frame and central loop)
   nameplates.UpdateCastbar = function(nameplate, now)
     if not nameplate or not nameplate.castbar then return end
-    local castInfo = GetCastInfo(nameplate.unit)
+    local castInfo = GetCastInfo(nameplate.unit, nameplate, now)
     if not castInfo or castInfo.endTime < now then
       nameplate.castbar.isShown = nil
       nameplate.castbar.lastEndTime = nil

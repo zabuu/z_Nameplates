@@ -302,6 +302,36 @@ chat settings/hidden-player speech. Existing diagnostics attributing particular
 mail/gossip hitches to native frame calls are separate; these changes do not prove
 those stalls, or other frame drops, have been eliminated.
 
+## Orgrimmar render pass (2.1.1, October 18, 2026)
+
+The October 18 town capture recorded 2,858 ms in the main nameplate callback
+across 1,108 calls (2.58 ms/call), peaking at 23 ms with 47 plates visible.
+This is a mixed friendly-on/off run, not a measured on/off comparison. Its
+largest 648 ms interval instead included a 583 ms MailFrame:Raise operation.
+
+The central render pass now samples common UI/world scale, dimensions and
+transition settings once. Its reusable context ends after that pass; independent
+chat/preview consumers still read live values even at the same timestamp.
+Nameplate cast checks reuse the current frame's validated unit identity and
+timestamp, falling back to a live token lookup if the association is absent
+or stale. Render-rate projection, distance animation, depth crossings, LOS
+cadence, cast events, appearance and settings behavior are unchanged.
+
+Mocked 50-plate render comparison against the preserved 2.1.0 source:
+
+- Common base/effective-scale reads: 300 -> 3.
+- All 50 native projections and identity validations remain.
+- Fifty subsequent known-identity cast checks: 50 extra GUID reads -> 0.
+- Dynamic camera/scale, appearance, offsets, recycled identities and live
+  same-timestamp calls outside the context match the prior rendering.
+
+All 28 Python/Lua test scripts pass. These counts are not an FPS claim and do
+not establish a fix for the native mail-window stall. Use `/reload`, then record
+two short stationary OctoPerf runs from the same camera: friendly plates off,
+then on. Keep mail/gossip closed to isolate plate cost. The source and log
+backup are under `_pfUIFreezeFix/backups/2026-10-18-org-friendly/` and
+`_pfUIFreezeFix/captures/2026-10-18-org-friendly-before.lua` in the AddOns root.
+
 ## World timers
 
 The **World timers** settings page enables compact markers for your own hunter
