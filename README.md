@@ -332,6 +332,39 @@ then on. Keep mail/gossip closed to isolate plate cost. The source and log
 backup are under `_pfUIFreezeFix/backups/2026-10-18-org-friendly/` and
 `_pfUIFreezeFix/captures/2026-10-18-org-friendly-before.lua` in the AddOns root.
 
+## Batched native projection (2.1.2, zAPI 2.8)
+
+Visible nameplates now submit their validated GUIDs to one reusable native batch
+per render pass (up to 512; additional plates keep the single-unit path). Camera
+and viewport setup are shared; every plate still gets the same model-name
+attachment, native projection and depth every rendered frame, including the
+high-FPS visual-only branch. There is no positional interpolation/staggering,
+guessed height, native-frame collision anchor, or cached client object pointer
+in this change. Existing depth crossing/order, world-distance sampling, smooth
+size/opacity animation, input, avoidance, chat and damage-number behavior remain.
+
+The addon probes capability once per API instance. Older DLLs and whole-call
+failures retain the old path; individual missing/off-camera model attachments
+remain gaps rather than snapping to another height. GUID/token ownership checks,
+recycling checks, WorldFrame-to-UI scale conversion, and per-render serials prevent
+stale results being reused for another unit or same-timestamp camera pass.
+
+In the 50-plate/122-render mocked camera replay, 6,100 single-unit projection calls
+become 122 batches, retaining all 6,100 projections and identity validations.
+Native harness results match the unchanged per-unit helper, with one camera and
+viewport capture per batch. Ten thousand warm native batches do not grow scratch
+capacity; 2,000 warm Lua renders also reuse their buffers without meaningful
+allocation growth. These are regression/call-count checks, not in-game FPS data.
+The optional recorder labels the new native operation `zNP native anchor batch`.
+
+Pre-change source snapshots are saved locally in both addon repositories as
+`backup/pre-projection-batch-2026-10-18` (including the already-pending edits).
+The zDNumbers snapshot also stores the exact pre-change game-root DLL at Git path
+`native/zAPI/checkpoints/zAPI-installed-pre-projection-batch-2026-10-18.dll`.
+No profiles or saved settings were changed. Fully restart WoW for zAPI 2.8, then
+compare stationary and camera-moving town scenes from the same location. `/reload`
+alone cannot replace the native DLL already loaded into the client.
+
 ## World timers
 
 The **World timers** settings page enables compact markers for your own hunter

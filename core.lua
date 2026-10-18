@@ -460,6 +460,7 @@ function Z.BeginPlateRender(now)
   if not state then state={}; Z.plateRenderContext=state end
   local C=Z.config.nameplates
   state.now,state.active,state.ui,state.world=now,true,UIParent,WorldFrame
+  state.serial=(state.serial or 0)+1
   state.baseScale=UIParent:GetScale()
   state.uiScale=UIParent.GetEffectiveScale and UIParent:GetEffectiveScale() or 1
   state.worldScale=WorldFrame and WorldFrame.GetEffectiveScale and WorldFrame:GetEffectiveScale() or nil
@@ -492,8 +493,12 @@ function Z.GetPlateProjection(plate, now)
   local sample = plate.projectionSample
   if not sample then sample = {}; plate.projectionSample = sample end
   local command = Z.GetPlateProjectionCommand()
-  if sample.time ~= now or sample.identity ~= identity or sample.api ~= zAPI or sample.command ~= command then
+  local render=Z.plateRenderContext
+  local serial=render and render.active and render.now==now and render.serial or nil
+  if sample.time ~= now or sample.identity ~= identity or sample.api ~= zAPI or sample.command ~= command
+      or (serial and sample.renderSerial~=serial) then
     sample.time, sample.identity, sample.api, sample.command = now, identity, zAPI, command
+    sample.renderSerial=serial
     local cost,generation
     if Z.platePerfActive then cost,generation=Z.BeginPlateCost() end
     local ok, x, y, depth, wx, wy, wz = pcall(zAPI, command, identity, 0)
@@ -516,10 +521,74 @@ function Z.GetPlateProjectionCommand()
   if Z.plateProjectionAPI ~= zAPI then
     Z.plateProjectionAPI = zAPI
     local ok, version = pcall(zAPI, "version")
+    Z.plateProjectionVersion=ok and type(version)=="number" and version or 0
     Z.plateProjectionCommand = ok and type(version)=="number" and version>=1.9
       and "projectNameplate" or "projectUnit"
   end
   return Z.plateProjectionCommand or "projectUnit"
+end
+
+function Z.PreparePlateProjections(now,visible)
+  local render=Z.plateRenderContext
+  if not render or not render.active or render.now~=now or type(zAPI)~="function" then return end
+  if Z.GetPlateProjectionCommand()~="projectNameplate" or Z.plateProjectionVersion<2.8 then return end
+  if Z.plateBatchAPI~=zAPI then
+    Z.plateBatchAPI=zAPI
+    local ok,version=pcall(zAPI,"nameplateBatchVersion")
+    Z.plateBatchSupported=ok and version==1
+  end
+  if not Z.plateBatchSupported then return end
+  local batch=Z.plateBatch
+  if not batch then batch={ids={},plates={},output={},count=0}; Z.plateBatch=batch end
+  if batch.busy then return end
+  local count=0
+  for parent in pairs(visible) do
+    local plate=parent.nameplate
+    if count<512 and plate and not plate.isDummy and not plate.clusterHidden
+        and parent:IsVisible() and Z.IsPlateUnitCurrent(plate,now) then
+      count=count+1
+      batch.ids[count],batch.plates[count]=plate.cachedGuid,plate
+    end
+  end
+  for i=count+1,batch.count do batch.ids[i],batch.plates[i]=nil,nil end
+  batch.count=count
+  if count==0 then return end
+  local cost,generation
+  if Z.platePerfActive then cost,generation=Z.BeginPlateCost() end
+  local api,serial=zAPI,render.serial
+  batch.busy=true
+  local ok,written=pcall(api,"projectNameplatesInto",batch.ids,count,batch.output)
+  batch.busy=nil
+  if cost then Z.EndPlateCost("zNP native anchor batch",cost,generation,count) end
+  -- A whole-call failure uses the original per-unit path. A successful row
+  -- with valid=0 is a real projection gap, not permission to guess an anchor.
+  if not ok or written~=count or zAPI~=api or not render.active or render.serial~=serial then return end
+  for i=1,count do
+    local offset=(i-1)*7
+    local valid=batch.output[offset+1]
+    if valid~=0 and valid~=1 then return end
+    if valid==1 then
+      for j=2,7 do if type(batch.output[offset+j])~="number" then return end end
+    end
+  end
+  for i=1,count do
+    local plate=batch.plates[i]
+    -- The association may have changed during a callback in the native call.
+    -- GetPlateProjection still performs its normal live-token validation.
+    if plate.cachedGuid==batch.ids[i] then
+      local sample=plate.projectionSample
+      if not sample then sample={}; plate.projectionSample=sample end
+      sample.time,sample.identity,sample.api,sample.command=now,batch.ids[i],zAPI,"projectNameplate"
+      sample.renderSerial=render.serial
+      local offset=(i-1)*7
+      sample.x,sample.y,sample.depth=nil,nil,nil
+      sample.wx,sample.wy,sample.wz=nil,nil,nil
+      if batch.output[offset+1]==1 then
+        sample.x,sample.y,sample.depth=batch.output[offset+2],batch.output[offset+3],batch.output[offset+4]
+        sample.wx,sample.wy,sample.wz=batch.output[offset+5],batch.output[offset+6],batch.output[offset+7]
+      end
+    end
+  end
 end
 
 -- A still-visible pooled frame is not evidence that its old unit is current.

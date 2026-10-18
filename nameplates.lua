@@ -434,7 +434,9 @@ function zNameplates.StartNameplates()
     if type(zAPI) == "function" and guid then
       local sample=nameplate.projectionSample
       local depth
-      if sample and sample.time==frameState.now and sample.identity==guid and sample.api==zAPI then
+      local render=zNameplates.plateRenderContext
+      if sample and sample.time==frameState.now and sample.identity==guid and sample.api==zAPI
+          and (not render or not render.active or sample.renderSerial==render.serial) then
         depth=sample.depth
       else
         local sx,sy
@@ -1464,6 +1466,7 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
       -- expensive unit-data refreshes remain capped below.
       frameState.now = now
       if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
+      if zNameplates.PreparePlateProjections then zNameplates.PreparePlateProjections(now,visiblePlates) end
       zNameplates.UpdateStickyPlacements(now, visiblePlates, ShouldOverlap, frameState.targetGuid, frameState.mouseoverGuid)
       if cost then zNameplates.EndPlateCost("zNP layout and projection",cost,generation,visiblePlateCount) end
       if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
@@ -1518,6 +1521,7 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
     end
     if cost then zNameplates.EndPlateCost("zNP cluster bookkeeping",cost,generation,visiblePlateCount) end
     if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
+    if zNameplates.PreparePlateProjections then zNameplates.PreparePlateProjections(now,visiblePlates) end
     zNameplates.UpdateStickyPlacements(now, visiblePlates, ShouldOverlap, frameState.targetGuid, frameState.mouseoverGuid)
     if cost then zNameplates.EndPlateCost("zNP layout and projection",cost,generation,visiblePlateCount) end
 
