@@ -302,6 +302,101 @@ chat settings/hidden-player speech. Existing diagnostics attributing particular
 mail/gossip hitches to native frame calls are separate; these changes do not prove
 those stalls, or other frame drops, have been eliminated.
 
+## Orgrimmar render pass (2.1.1, October 18, 2026)
+
+The October 18 town capture recorded 2,858 ms in the main nameplate callback
+across 1,108 calls (2.58 ms/call), peaking at 23 ms with 47 plates visible.
+This is a mixed friendly-on/off run, not a measured on/off comparison. Its
+largest 648 ms interval instead included a 583 ms MailFrame:Raise operation.
+
+The central render pass now samples common UI/world scale, dimensions and
+transition settings once. Its reusable context ends after that pass; independent
+chat/preview consumers still read live values even at the same timestamp.
+Nameplate cast checks reuse the current frame's validated unit identity and
+timestamp, falling back to a live token lookup if the association is absent
+or stale. Render-rate projection, distance animation, depth crossings, LOS
+cadence, cast events, appearance and settings behavior are unchanged.
+
+Mocked 50-plate render comparison against the preserved 2.1.0 source:
+
+- Common base/effective-scale reads: 300 -> 3.
+- All 50 native projections and identity validations remain.
+- Fifty subsequent known-identity cast checks: 50 extra GUID reads -> 0.
+- Dynamic camera/scale, appearance, offsets, recycled identities and live
+  same-timestamp calls outside the context match the prior rendering.
+
+All 28 Python/Lua test scripts pass. These counts are not an FPS claim and do
+not establish a fix for the native mail-window stall. Use `/reload`, then record
+two short stationary OctoPerf runs from the same camera: friendly plates off,
+then on. Keep mail/gossip closed to isolate plate cost. The source and log
+backup are under `_pfUIFreezeFix/backups/2026-10-18-org-friendly/` and
+`_pfUIFreezeFix/captures/2026-10-18-org-friendly-before.lua` in the AddOns root.
+
+## Batched native projection (2.1.2, zAPI 2.8)
+
+Visible nameplates now submit their validated GUIDs to one reusable native batch
+per render pass (up to 512; additional plates keep the single-unit path). Camera
+and viewport setup are shared; every plate still gets the same model-name
+attachment, native projection and depth every rendered frame, including the
+high-FPS visual-only branch. There is no positional interpolation/staggering,
+guessed height, native-frame collision anchor, or cached client object pointer
+in this change. Existing depth crossing/order, world-distance sampling, smooth
+size/opacity animation, input, avoidance, chat and damage-number behavior remain.
+
+The addon probes capability once per API instance. Older DLLs and whole-call
+failures retain the old path; individual missing/off-camera model attachments
+remain gaps rather than snapping to another height. GUID/token ownership checks,
+recycling checks, WorldFrame-to-UI scale conversion, and per-render serials prevent
+stale results being reused for another unit or same-timestamp camera pass.
+
+In the 50-plate/122-render mocked camera replay, 6,100 single-unit projection calls
+become 122 batches, retaining all 6,100 projections and identity validations.
+Native harness results match the unchanged per-unit helper, with one camera and
+viewport capture per batch. Ten thousand warm native batches do not grow scratch
+capacity; 2,000 warm Lua renders also reuse their buffers without meaningful
+allocation growth. These are regression/call-count checks, not in-game FPS data.
+The optional recorder labels the new native operation `zNP native anchor batch`.
+
+Pre-change source snapshots are saved locally in both addon repositories as
+`backup/pre-projection-batch-2026-10-18` (including the already-pending edits).
+The zDNumbers snapshot also stores the exact pre-change game-root DLL at Git path
+`native/zAPI/checkpoints/zAPI-installed-pre-projection-batch-2026-10-18.dll`.
+No profiles or saved settings were changed. Fully restart WoW for zAPI 2.8, then
+compare stationary and camera-moving town scenes from the same location. `/reload`
+alone cannot replace the native DLL already loaded into the client.
+
+## Background friendly updates (2.1.3, October 18, 2026)
+
+General now includes **Lighter background friendly plates**, enabled by default.
+Outside player combat, non-target, non-hovered friendly plates sample distance
+at 10 Hz and line of sight at 5 Hz, instead of 20 Hz / 10 Hz. Size and opacity
+continue interpolating, and world anchors/depth continue projecting every
+rendered frame. Selecting, hovering (including hover grace), entering combat,
+or disabling the option immediately restores the normal sampling policy.
+Hostiles and dummy previews retain the normal behavior.
+
+Background friends skip anchor writes below 0.05 screen pixels and scale writes
+below 0.00025, while continuous scale integration continues. Targets/hovered
+units use the original precision. Normal dimensions, fonts, opacity limits,
+cast/aura updates and mouse handling are preserved. Shared blend calculations
+also avoid repeating the same exponential for every plate in a frame.
+
+Combo-point widgets and their backdrops are created on first use instead of
+for every pooled plate. They still show all five points and honor settings;
+unused plates no longer create ten extra native frames each.
+
+All 30 Python/Lua test scripts pass. In the modeled 50-plate / 10-second run:
+distance reads 10,050 -> 5,050; LOS reads 5,050 -> 2,550; all 30,050 rendered
+anchor updates remain. Blend exponentials drop from 30,000 to at most 600. A small-jitter
+anchor case needs one native write over 120 renders, with error bounded to
+0.05 px. Fifty unused combo displays avoid 500 native frames. These are call
+counts and behavior checks, not measured live FPS gains.
+
+Use `/reload`; no DLL replacement/restart is needed. Compare the same friendly
+off/on captures again to measure the actual effect. Source and tests before
+this pass are backed up in the AddOns-root maintenance folder
+`_pfUIFreezeFix/backups/2026-10-18-background-friendly-2.1.2/`.
+
 ## World timers
 
 The **World timers** settings page enables compact markers for your own hunter

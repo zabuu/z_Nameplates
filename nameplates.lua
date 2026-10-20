@@ -124,12 +124,15 @@ function zNameplates.StartNameplates()
   -- Returns the cached struct while the cast is still active, else nil (and
   -- prunes the expired entry). Same struct shape and callers as before, minus
   -- the per-tick poll.
-  local function GetCastInfo(unit)
+  local function GetCastInfo(unit, plate, now)
     if not unit then return nil end
-    local guid = UnitGUID(unit)
+    -- Projection/layout already validates this association in the same frame.
+    -- A missing or recycled association must still resolve the live token.
+    local guid = plate and zNameplates.IsPlateUnitCurrent(plate,now)
+      and plate.cachedGuid or UnitGUID(unit)
     if not guid then return nil end
     local info = castState[guid]
-    if info and info.endTime > GetTime() then return info end
+    if info and info.endTime > (now or GetTime()) then return info end
     if info then castState[guid] = nil end
     return nil
   end
@@ -294,7 +297,7 @@ function zNameplates.StartNameplates()
     local hasTarget = mobTargetGuid and mobTargetGuid ~= NULL_GUID
     local color = false
 
-    local castInfo = GetCastInfo(token)
+    local castInfo = GetCastInfo(token, nil, now)
     local isCasting = castInfo and castInfo.endTime and now < castInfo.endTime
     local targetingPlayer = hasTarget and UnitIsUnit(target, "player")
 
@@ -390,18 +393,23 @@ function zNameplates.StartNameplates()
 
   local function SampleExactUnitDistance(plate, now)
     local unit,identity=plate.unit,plate.cachedGuid or plate.unit
+    local interval=plate.backgroundFriendly and .1 or .05
     local sample=plate.distanceSample
     if not sample then sample={}; plate.distanceSample=sample end
     if sample.identity~=identity or sample.unit~=unit or sample.api~=zAPI or sample.unitxp~=UnitXP
         or sample.position~=UnitPosition or sample.squared~=UnitDistanceSquared
-        or not sample.nextAt or now>=sample.nextAt then
+        or sample.interval~=interval or not sample.nextAt or now>=sample.nextAt then
+      if sample.identity~=identity or not sample.phase then
+        sample.phase=((tonumber(string.sub(tostring(identity or ""),-4),16) or 0)%10)/10
+      end
       sample.identity,sample.unit,sample.api,sample.unitxp=identity,unit,zAPI,UnitXP
       sample.position,sample.squared=UnitPosition,UnitDistanceSquared
       sample.value=ExactUnitDistance(unit,now)
-      local phase=((tonumber(string.sub(tostring(identity or ""),-4),16) or 0)%10)*.005
-      -- World distance does not depend on camera rotation. Sample at 20 Hz,
-      -- phase crowded scenes, and interpolate scale/opacity every render frame.
-      sample.nextAt=(math.floor((now-phase)/.05+.000001)+1)*.05+phase
+      sample.interval=interval
+      local phase=sample.phase*interval
+      -- Background friends use 10 Hz; interaction/combat restores 20 Hz.
+      -- Whole-plate scale and opacity still interpolate every render frame.
+      sample.nextAt=(math.floor((now-phase)/interval+.000001)+1)*interval+phase
     end
     return sample.value
   end
@@ -431,7 +439,9 @@ function zNameplates.StartNameplates()
     if type(zAPI) == "function" and guid then
       local sample=nameplate.projectionSample
       local depth
-      if sample and sample.time==frameState.now and sample.identity==guid and sample.api==zAPI then
+      local render=zNameplates.plateRenderContext
+      if sample and sample.time==frameState.now and sample.identity==guid and sample.api==zAPI
+          and (not render or not render.active or sample.renderSerial==render.serial) then
         depth=sample.depth
       else
         local sx,sy
@@ -715,12 +725,15 @@ function zNameplates.StartNameplates()
     if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
     zNameplates.RepairPlateTextLayers(plate, now)
     if cost then zNameplates.EndPlateCost("zNP text layer guard",cost,generation) end
-    local baseScale = UIParent:GetScale()
     now = now or GetTime()
+    local render=zNameplates.plateRenderContext
+    local baseScale=render and render.active and render.now==now and render.ui==UIParent
+      and render.baseScale or UIParent:GetScale()
     local identity = plate.cachedGuid or plate.unit
     if plate.distanceScaleIdentity ~= identity then
       plate.distanceScaleIdentity = identity
       plate.distanceScale = nil
+      plate.distanceAppliedScale = nil
       plate.distanceTargetScale = nil
       plate.distanceProgress = nil
       plate.distanceVisualTime = nil
@@ -734,7 +747,17 @@ function zNameplates.StartNameplates()
 
     local elapsed = plate.distanceVisualTime
       and math.max(0, math.min(.1, now - plate.distanceVisualTime)) or nil
-    local blend = elapsed and 1 - math.exp(-elapsed * 10) or 1
+    local blend=1
+    if elapsed then
+      if render and render.active and render.now==now and render.visualBlendElapsed==elapsed then
+        blend=render.visualBlend
+      else
+        blend=1-math.exp(-elapsed*10)
+        if render and render.active and render.now==now then
+          render.visualBlendElapsed,render.visualBlend=elapsed,blend
+        end
+      end
+    end
     plate.distanceVisualTime = now
 
     if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
@@ -762,11 +785,17 @@ function zNameplates.StartNameplates()
     local scale = plate.distanceScale or baseScale
     scale = scale + (targetScale - scale) * blend
     if abs(targetScale - scale) < .00001 then scale = targetScale end
-    if not plate.distanceScale or abs(plate.distanceScale - scale) > .000001 then
+    local applied=plate.distanceAppliedScale or plate.distanceScale
+    local epsilon=plate.backgroundFriendly and .00025 or .000001
+    if not applied or abs(applied-scale)>epsilon
+        or (not plate.backgroundFriendly and scale==targetScale and applied~=scale) then
       plate:SetScale(scale)
+      plate.distanceAppliedScale = scale
       plate.distanceScale = scale
       plate.dwidth = nil
     end
+    -- Integrate from the continuous value even when a subpixel write is skipped.
+    if plate.backgroundFriendly then plate.distanceScale = scale end
 
     -- Use the final scale: scaling after a screen-relative anchor can magnify
     -- its coordinates and cause a one-frame flyaway.
@@ -782,6 +811,11 @@ function zNameplates.StartNameplates()
 
     if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
     if cfg.los_fade and cfg.distance_unitxp and plate.unit then
+      local interval=plate.backgroundFriendly and .2 or .1
+      if plate.losSampleInterval~=interval or plate.losSampleAPI~=UnitXP then
+        plate.losNextSample=nil
+        plate.losSampleInterval,plate.losSampleAPI=interval,UnitXP
+      end
       if not plate.losNextSample or now >= plate.losNextSample then
         -- Validation belongs to the 10 Hz raycast, not every rendered frame.
         -- Lifecycle/identity changes already reset this sample immediately.
@@ -789,8 +823,10 @@ function zNameplates.StartNameplates()
         if UnitExists(plate.unit) then found,inSight=pcall(UnitXP,"inSight","player",plate.unit) end
         plate.losOutOfSight = found and inSight == false or nil
         local phase = plate.losSamplePhase or 0
-        -- Keep 10 Hz LOS accuracy, but spread expensive raycasts across ticks.
-        plate.losNextSample = (math.floor((now-phase)/.1+.000001)+1)*.1+phase
+        local interval=plate.backgroundFriendly and .2 or .1
+        phase=phase*interval/.1
+        -- Background friends use 5 Hz; interaction/combat restores 10 Hz.
+        plate.losNextSample = (math.floor((now-phase)/interval+.000001)+1)*interval+phase
       end
     else
       plate.losOutOfSight = nil
@@ -1452,12 +1488,14 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
       profileStart,profileGeneration=OctoPerf.BeginOperation()
     end
     zNameplates.platePerfActive=profileStart~=nil
+    if visiblePlateCount>0 and zNameplates.BeginPlateRender then zNameplates.BeginPlateRender(now) end
     local cost,generation
     if (this.frameTick or 0) + .01 > now and not this.depthDirty then
       -- Keep motion and depth crossings on the actual render cadence while
       -- expensive unit-data refreshes remain capped below.
       frameState.now = now
       if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
+      if zNameplates.PreparePlateProjections then zNameplates.PreparePlateProjections(now,visiblePlates) end
       zNameplates.UpdateStickyPlacements(now, visiblePlates, ShouldOverlap, frameState.targetGuid, frameState.mouseoverGuid)
       if cost then zNameplates.EndPlateCost("zNP layout and projection",cost,generation,visiblePlateCount) end
       if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
@@ -1470,6 +1508,7 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
       if cost then zNameplates.EndPlateCost("zNP depth ordering and layers",cost,generation,visiblePlateCount) end
       if profileStart then zNameplates.EndPlateCost("zNP full frame",profileStart,profileGeneration,visiblePlateCount) end
       zNameplates.platePerfActive=nil
+      if zNameplates.EndPlateRender then zNameplates.EndPlateRender() end
       return
     end
     this.frameTick = now
@@ -1511,6 +1550,7 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
     end
     if cost then zNameplates.EndPlateCost("zNP cluster bookkeeping",cost,generation,visiblePlateCount) end
     if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
+    if zNameplates.PreparePlateProjections then zNameplates.PreparePlateProjections(now,visiblePlates) end
     zNameplates.UpdateStickyPlacements(now, visiblePlates, ShouldOverlap, frameState.targetGuid, frameState.mouseoverGuid)
     if cost then zNameplates.EndPlateCost("zNP layout and projection",cost,generation,visiblePlateCount) end
 
@@ -1527,6 +1567,7 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
     if cost then zNameplates.EndPlateCost("zNP depth ordering and layers",cost,generation,visiblePlateCount) end
     if profileStart then zNameplates.EndPlateCost("zNP full frame",profileStart,profileGeneration,visiblePlateCount) end
     zNameplates.platePerfActive=nil
+    if zNameplates.EndPlateRender then zNameplates.EndPlateRender() end
   end)
 
   -- combat tracker
@@ -1684,25 +1725,9 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
       CreateDebuffIcon(nameplate, 1)
     end
 
-    do -- combopoints
-      local combopoints = { }
-      for i = 1, 5 do
-        combopoints[i] = CreateFrame("Frame", nil, nameplate)
-        combopoints[i]:Hide()
-        combopoints[i]:SetFrameLevel(8)
-        combopoints[i].tex = combopoints[i]:CreateTexture("OVERLAY")
-        combopoints[i].tex:SetAllPoints()
-
-        if i < 3 then
-          combopoints[i].tex:SetTexture(1, .3, .3, .75)
-        elseif i < 4 then
-          combopoints[i].tex:SetTexture(1, 1, .3, .75)
-        else
-          combopoints[i].tex:SetTexture(.3, 1, .3, .75)
-        end
-      end
-      nameplate.combopoints = combopoints
-    end
+    -- Most pooled plates never display combo points. Avoid ten native frames
+    -- (five points plus their backdrops) until this plate actually needs them.
+    nameplate.combopoints = {}
 
     do -- castbar
       local castbar = CreateFrame("StatusBar", nil, nameplate.health)
@@ -1763,6 +1788,29 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
     nameplates.OnConfigChange(parent)
   end
 
+  nameplates.EnsureComboPoints = function(plate)
+    local _,border=GetBorderSize("nameplates")
+    local size=5
+    for i=1,5 do
+      local point=plate.combopoints[i]
+      if not point then
+        point=CreateFrame("Frame",nil,plate)
+        point:Hide()
+        point:SetFrameLevel((plate.cachedBaseLevel or 2)+6)
+        point.tex=point:CreateTexture(nil,"OVERLAY")
+        point.tex:SetAllPoints()
+        if i<3 then point.tex:SetTexture(1,.3,.3,.75)
+        elseif i<4 then point.tex:SetTexture(1,1,.3,.75)
+        else point.tex:SetTexture(.3,1,.3,.75) end
+        plate.combopoints[i]=point
+      end
+      point:SetSize(size,size)
+      point:SetPoint("TOPRIGHT",plate.health,"BOTTOMRIGHT",-(i-1)*(size+border*3),-border*3)
+      CreateBackdrop(point,border)
+    end
+    plate.layersDirty=true
+  end
+
   nameplates.OnConfigChange = function(frame)
     local parent = frame
     local nameplate = frame.nameplate
@@ -1778,7 +1826,6 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
     local plate_width = C.nameplates.width + 50
     local plate_height = C.nameplates.heighthealth + font_size + 5
     -- local plate_height_cast = C.nameplates.heighthealth + font_size + 5 + C.nameplates.heightcast + 5
-    local combo_size = 5
 
     -- local width = tonumber(C.nameplates.width)
     -- local debuffsize = tonumber(C.nameplates.debuffsize)
@@ -1836,11 +1883,7 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
       UpdateDebuffConfig(nameplate, i)
     end
 
-    for i=1,5 do
-      nameplate.combopoints[i]:SetSize(combo_size, combo_size)
-      nameplate.combopoints[i]:SetPoint("TOPRIGHT", nameplate.health, "BOTTOMRIGHT", -(i-1)*(combo_size+default_border*3), -default_border*3)
-      CreateBackdrop(nameplate.combopoints[i], default_border)
-    end
+    if nameplate.combopoints[1] then nameplates.EnsureComboPoints(nameplate) end
 
     nameplate.castbar:SetPoint("TOPLEFT", nameplate.health, "BOTTOMLEFT", 0, -default_border*3)
     nameplate.castbar:SetPoint("TOPRIGHT", nameplate.health, "BOTTOMRIGHT", 0, -default_border*3)
@@ -2241,11 +2284,12 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
     if target and C.nameplates.cpdisplay == "1" then
       local cp = GetComboPoints("target")
       if plate.cpShown ~= cp then
-        for i=1, 5 do plate.combopoints[i]:SetShown(i <= cp) end
+        if cp>0 and not plate.combopoints[1] then nameplates.EnsureComboPoints(plate) end
+        for i=1,5 do if plate.combopoints[i] then plate.combopoints[i]:SetShown(i <= cp) end end
         plate.cpShown = cp
       end
     elseif plate.cpShown then
-      for i=1, 5 do plate.combopoints[i]:Hide() end
+      for i=1,5 do if plate.combopoints[i] then plate.combopoints[i]:Hide() end end
       plate.cpShown = nil
     end
 
@@ -2376,6 +2420,8 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
     -- Size, opacity, and line-of-sight transitions run at the fast central
     -- cadence so movement remains continuous even when normal plate data is
     -- using the lower non-target update rate.
+    nameplate.backgroundFriendly=zNameplates.IsBackgroundFriendlyPlate
+      and zNameplates.IsBackgroundFriendlyPlate(nameplate,targetGuid,state and state.mouseoverGuid,now) or false
     ApplyDistanceEffects(nameplate, now, baseAlpha)
     if visualOnly then return end
     -- Target plate castbar runs on its own dedicated frame (nameplates.castbarFrame).
@@ -2383,7 +2429,7 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
     -- smooth animation without overloading the central loop.
     local isCastingNonTarget = not target and nameplate.castbar and nameplate.castbar:IsShown()
     if not nameplate.clusterGroup and not isCastingNonTarget and not target and cfg.showcastbar and nameplate.cachedGuid then
-      local castInfo = GetCastInfo(nameplate.unit)
+      local castInfo = GetCastInfo(nameplate.unit, nameplate, now)
       if castInfo and castInfo.endTime > now then
         isCastingNonTarget = true
       end
@@ -2640,7 +2686,7 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
   -- Shared castbar update logic (used by both dedicated frame and central loop)
   nameplates.UpdateCastbar = function(nameplate, now)
     if not nameplate or not nameplate.castbar then return end
-    local castInfo = GetCastInfo(nameplate.unit)
+    local castInfo = GetCastInfo(nameplate.unit, nameplate, now)
     if not castInfo or castInfo.endTime < now then
       nameplate.castbar.isShown = nil
       nameplate.castbar.lastEndTime = nil

@@ -22,6 +22,7 @@ EnsureDB=function() return db end; Timestamp=function() return "test" end
 Z={}; zNameplates=Z; cfg={distance_scale=true,distance_alpha=true,distance_min_scale=.5,
  distance_min_alpha=.4,distance_max_range=41,los_fade=true,distance_unitxp=true}
 C={nameplates={vertical_offset="0"}}
+Z.config=C
 frameState={}; visiblePlateCount=3; visiblePlates={}; units={}; parents={}
 UIParent={GetScale=function() return 1 end}; abs=math.abs
 UnitExists=function(u) return units[u]~=nil end

@@ -73,6 +73,7 @@ local pages = {
     items = {
       { "check", "Show hostile nameplates", {"nameplates","showhostile"} },
       { "check", "Show friendly nameplates", {"nameplates","showfriendly"} },
+      { "check", "Lighter background friendly plates", {"nameplates","friendly_performance"} },
       { "check", "Hide Blizzard XP floating text", {"nameplates","hide_blizzard_xp"} },
       { "check", "Disable hostile plates in friendly zones", {"nameplates","disable_hostile_in_friendly"} },
       { "check", "Disable friendly plates in friendly zones", {"nameplates","disable_friendly_in_friendly"} },
@@ -327,7 +328,7 @@ local descriptions = {
   ["World timers"]="Your traps and flares, pinned to confirmed world positions. Requires zAPI 2.2.",
 }
 local sectionRules = {
-  General={{"Visibility","showhostile showfriendly hide_blizzard_xp disable_hostile_in_friendly disable_friendly_in_friendly"},
+  General={{"Visibility","showhostile showfriendly friendly_performance hide_blizzard_xp disable_hostile_in_friendly disable_friendly_in_friendly"},
     {"Interaction","clickthrough clickthrough_friendly mouseover_unit rightclick clickthreshold"},{"Stacking","overlap_enemy overlap_friendly overlap_friendly_area overlap_combat collision_buffer_x collision_buffer_y"}},
   Health={{"Layout","width vertical_offset offset heighthealth healthtexture verticalhealth"},
     {"Health labels","showhp hptextpos hptextformat"},{"Visibility rules","enemynpc enemyplayer neutralnpc friendlynpc friendlyplayer critters totems fullhealth target"},
@@ -351,6 +352,7 @@ local sectionRules = {
     {"Distance sizing","distance_scale distance_min_scale"},{"Distance & line of sight","distance_alpha distance_min_alpha los_fade los_desaturation"}},
 }
 local help = {
+  friendly_performance="Use lighter distance and line-of-sight updates for background friends. Camera tracking stays smooth. Selecting, hovering or entering combat restores normal updates.",
   clickthrough="Ignore normal plate clicks. Clusters remain clickable; interface windows always take priority.",
   clickthrough_friendly="Ignore friendly plate clicks and hover events. Turn off the general Click-through nameplates option to keep hostile plates clickable. Neutral NPCs are unaffected.",
   mouseover_unit="Requires SetMouseoverUnit (SuperWoW / Nampower). Normal plates need click-through off to receive hover events. Targets are never changed.",

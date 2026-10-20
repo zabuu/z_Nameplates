@@ -78,6 +78,7 @@ local defaults = {
   },
   nameplates = {
     showhostile = "1", showfriendly = "1",
+    friendly_performance = "1",
     disable_hostile_in_friendly = "0", disable_friendly_in_friendly = "0",
     use_unitfonts = "1", overlap_enemy = "0", overlap_friendly = "1",
     overlap_friendly_area = "1", overlap_combat = "1",
@@ -377,6 +378,15 @@ function Z.ShouldUseCombatNameColor(plate, enabled, now)
   return UnitAffectingCombat("player") or nil
 end
 
+function Z.IsBackgroundFriendlyPlate(plate, targetGuid, hoverGuid, now)
+  if not plate or not plate.isFriendly or plate.isDummy
+      or Z.config.nameplates.friendly_performance=="0" then return false end
+  local guid=plate.cachedGuid
+  if not guid or guid==targetGuid or guid==hoverGuid or plate.layoutHoverReceiver
+      or (plate.layoutHoverUntil and now<plate.layoutHoverUntil) then return false end
+  return not Z.GetPlayerCombatState(now)
+end
+
 local function PlateMouseFocusKind(frame)
   if not frame or frame == UIParent or frame == WorldFrame then return "world" end
   local current = frame
@@ -452,6 +462,31 @@ function Z.EndPlateCost(label, started, generation, detail)
   OctoPerf.EndOperation(label,started,generation,detail)
 end
 
+-- These values are common to every plate in one central render pass. Keep the
+-- record scoped to that pass; independent chat/preview calls still read live UI
+-- state, including settings changes at the same GetTime() timestamp.
+function Z.BeginPlateRender(now)
+  local state=Z.plateRenderContext
+  if not state then state={}; Z.plateRenderContext=state end
+  local C=Z.config.nameplates
+  state.now,state.active,state.ui,state.world=now,true,UIParent,WorldFrame
+  state.serial=(state.serial or 0)+1
+  state.baseScale=UIParent:GetScale()
+  state.uiScale=UIParent.GetEffectiveScale and UIParent:GetEffectiveScale() or 1
+  state.worldScale=WorldFrame and WorldFrame.GetEffectiveScale and WorldFrame:GetEffectiveScale() or nil
+  state.width=UIParent.GetWidth and UIParent:GetWidth() or nil
+  state.height=UIParent.GetHeight and UIParent:GetHeight() or nil
+  state.projectionFactor=state.worldScale and state.uiScale>0 and state.worldScale>0
+    and state.worldScale/state.uiScale or 1
+  state.transitionDuration=math.max(.05,math.min(.5,tonumber(C.transition_duration) or .12))
+  state.smoothTransitions=C.smooth_transitions=="1"
+  state.verticalOffset=tonumber(C.vertical_offset) or 0
+end
+
+function Z.EndPlateRender()
+  if Z.plateRenderContext then Z.plateRenderContext.active=false end
+end
+
 -- Reuse native reads within one rendered frame. Cache by identity as well as
 -- time so a recycled pool slot can never inherit the previous unit's result.
 function Z.GetPlateProjection(plate, now)
@@ -468,8 +503,12 @@ function Z.GetPlateProjection(plate, now)
   local sample = plate.projectionSample
   if not sample then sample = {}; plate.projectionSample = sample end
   local command = Z.GetPlateProjectionCommand()
-  if sample.time ~= now or sample.identity ~= identity or sample.api ~= zAPI or sample.command ~= command then
+  local render=Z.plateRenderContext
+  local serial=render and render.active and render.now==now and render.serial or nil
+  if sample.time ~= now or sample.identity ~= identity or sample.api ~= zAPI or sample.command ~= command
+      or (serial and sample.renderSerial~=serial) then
     sample.time, sample.identity, sample.api, sample.command = now, identity, zAPI, command
+    sample.renderSerial=serial
     local cost,generation
     if Z.platePerfActive then cost,generation=Z.BeginPlateCost() end
     local ok, x, y, depth, wx, wy, wz = pcall(zAPI, command, identity, 0)
@@ -481,7 +520,7 @@ function Z.GetPlateProjection(plate, now)
       sample.wx, sample.wy, sample.wz = wx, wy, wz
     end
   end
-  local x,y=Z.NormalizeWorldProjection(sample.x,sample.y)
+  local x,y=Z.NormalizeWorldProjection(sample.x,sample.y,now)
   return x, y, sample.depth, sample.wx, sample.wy, sample.wz
 end
 
@@ -492,10 +531,74 @@ function Z.GetPlateProjectionCommand()
   if Z.plateProjectionAPI ~= zAPI then
     Z.plateProjectionAPI = zAPI
     local ok, version = pcall(zAPI, "version")
+    Z.plateProjectionVersion=ok and type(version)=="number" and version or 0
     Z.plateProjectionCommand = ok and type(version)=="number" and version>=1.9
       and "projectNameplate" or "projectUnit"
   end
   return Z.plateProjectionCommand or "projectUnit"
+end
+
+function Z.PreparePlateProjections(now,visible)
+  local render=Z.plateRenderContext
+  if not render or not render.active or render.now~=now or type(zAPI)~="function" then return end
+  if Z.GetPlateProjectionCommand()~="projectNameplate" or Z.plateProjectionVersion<2.8 then return end
+  if Z.plateBatchAPI~=zAPI then
+    Z.plateBatchAPI=zAPI
+    local ok,version=pcall(zAPI,"nameplateBatchVersion")
+    Z.plateBatchSupported=ok and version==1
+  end
+  if not Z.plateBatchSupported then return end
+  local batch=Z.plateBatch
+  if not batch then batch={ids={},plates={},output={},count=0}; Z.plateBatch=batch end
+  if batch.busy then return end
+  local count=0
+  for parent in pairs(visible) do
+    local plate=parent.nameplate
+    if count<512 and plate and not plate.isDummy and not plate.clusterHidden
+        and parent:IsVisible() and Z.IsPlateUnitCurrent(plate,now) then
+      count=count+1
+      batch.ids[count],batch.plates[count]=plate.cachedGuid,plate
+    end
+  end
+  for i=count+1,batch.count do batch.ids[i],batch.plates[i]=nil,nil end
+  batch.count=count
+  if count==0 then return end
+  local cost,generation
+  if Z.platePerfActive then cost,generation=Z.BeginPlateCost() end
+  local api,serial=zAPI,render.serial
+  batch.busy=true
+  local ok,written=pcall(api,"projectNameplatesInto",batch.ids,count,batch.output)
+  batch.busy=nil
+  if cost then Z.EndPlateCost("zNP native anchor batch",cost,generation,count) end
+  -- A whole-call failure uses the original per-unit path. A successful row
+  -- with valid=0 is a real projection gap, not permission to guess an anchor.
+  if not ok or written~=count or zAPI~=api or not render.active or render.serial~=serial then return end
+  for i=1,count do
+    local offset=(i-1)*7
+    local valid=batch.output[offset+1]
+    if valid~=0 and valid~=1 then return end
+    if valid==1 then
+      for j=2,7 do if type(batch.output[offset+j])~="number" then return end end
+    end
+  end
+  for i=1,count do
+    local plate=batch.plates[i]
+    -- The association may have changed during a callback in the native call.
+    -- GetPlateProjection still performs its normal live-token validation.
+    if plate.cachedGuid==batch.ids[i] then
+      local sample=plate.projectionSample
+      if not sample then sample={}; plate.projectionSample=sample end
+      sample.time,sample.identity,sample.api,sample.command=now,batch.ids[i],zAPI,"projectNameplate"
+      sample.renderSerial=render.serial
+      local offset=(i-1)*7
+      sample.x,sample.y,sample.depth=nil,nil,nil
+      sample.wx,sample.wy,sample.wz=nil,nil,nil
+      if batch.output[offset+1]==1 then
+        sample.x,sample.y,sample.depth=batch.output[offset+2],batch.output[offset+3],batch.output[offset+4]
+        sample.wx,sample.wy,sample.wz=batch.output[offset+5],batch.output[offset+6],batch.output[offset+7]
+      end
+    end
+  end
 end
 
 -- A still-visible pooled frame is not evidence that its old unit is current.
@@ -530,8 +633,12 @@ end
 -- zAPI projects in the native WorldFrame's coordinate space. UIParent may
 -- use a different UI scale; treating those spaces as identical shifts every
 -- projected anchor toward the screen origin (especially obvious at 0.9 UI).
-function Z.NormalizeWorldProjection(x,y)
+function Z.NormalizeWorldProjection(x,y,now)
   if type(x)~="number" or type(y)~="number" then return x,y end
+  local render=Z.plateRenderContext
+  if render and render.active and render.now==now and render.ui==UIParent and render.world==WorldFrame then
+    return x*render.projectionFactor,y*render.projectionFactor
+  end
   if not WorldFrame or not WorldFrame.GetEffectiveScale or not UIParent or not UIParent.GetEffectiveScale then return x,y end
   local ui,world=UIParent:GetEffectiveScale(),WorldFrame:GetEffectiveScale()
   if not ui or not world or ui<=0 or world<=0 then return x,y end
@@ -686,14 +793,17 @@ function Z.UpdatePlateTransition(plate, now)
   if not parent then return end
   local identity = plate.cachedGuid or plate.unit
   local state = plate.positionTransition
-  local duration = math.max(.05, math.min(.5, tonumber(C.transition_duration) or .12))
+  local render=Z.plateRenderContext
+  if not render or not render.active or render.now~=now or render.ui~=UIParent then render=nil end
+  local duration = render and render.transitionDuration or math.max(.05, math.min(.5, tonumber(C.transition_duration) or .12))
   if not state or state.identity ~= identity then
     state = {identity=identity, started=now, last=now, offsetX=0, offsetY=0}
     plate.positionTransition = state
   end
   local enabled = C.smooth_transitions == "1"
+  if render then enabled=render.smoothTransitions end
   plate.appearanceAlpha = enabled and math.min(1, math.max(0, (now - state.started) / duration)) or 1
-  local uiScale = UIParent.GetEffectiveScale and UIParent:GetEffectiveScale() or 1
+  local uiScale = render and render.uiScale or (UIParent.GetEffectiveScale and UIParent:GetEffectiveScale() or 1)
   local plateScale = plate.GetEffectiveScale and plate:GetEffectiveScale() or 1
   if uiScale <= 0 or plateScale <= 0 then return end
   if plate.worldPlacementOwned then
@@ -703,9 +813,10 @@ function Z.UpdatePlateTransition(plate, now)
     state.x,state.y,state.px,state.py=nil,nil,nil,nil
     local ox,oy=Z.ApplyStickyPlacement(plate,now,nil,nil,uiScale,plateScale)
     if not ox then return end
-    oy=oy+(tonumber(C.vertical_offset) or 0)
-    if state.appliedReference~=UIParent or not state.appliedX or math.abs(ox-state.appliedX)>.001
-        or math.abs(oy-state.appliedY)>.001 then
+    oy=oy+(render and render.verticalOffset or tonumber(C.vertical_offset) or 0)
+    local epsilon=plate.backgroundFriendly and .05/plateScale or .001
+    if state.appliedReference~=UIParent or not state.appliedX or math.abs(ox-state.appliedX)>epsilon
+        or math.abs(oy-state.appliedY)>epsilon then
       if state.appliedReference~=UIParent or not state.appliedX then plate:ClearAllPoints() end
       plate:SetPoint("TOP",UIParent,"BOTTOMLEFT",ox,oy)
       state.appliedReference=UIParent; state.appliedX,state.appliedY=ox,oy
@@ -722,7 +833,7 @@ function Z.UpdatePlateTransition(plate, now)
     local sx, sy, depth = Z.GetPlateProjection(plate, now)
     if type(sx) == "number" and type(sy) == "number"
         and type(depth) == "number" and depth > 0 then
-      px, py = sx * UIParent:GetWidth(), sy * UIParent:GetHeight()
+      px, py = sx * (render and render.width or UIParent:GetWidth()), sy * (render and render.height or UIParent:GetHeight())
     end
   end
   local elapsed = math.max(0, math.min(.1, now - state.last))
@@ -749,12 +860,12 @@ function Z.UpdatePlateTransition(plate, now)
   end
   state.x, state.y, state.px, state.py, state.last = x, y, px, py, now
   local ox = state.offsetX * uiScale / plateScale
-  local oy = state.offsetY * uiScale / plateScale + (tonumber(C.vertical_offset) or 0)
+  local oy = state.offsetY * uiScale / plateScale + (render and render.verticalOffset or tonumber(C.vertical_offset) or 0)
   local reference, referencePoint = parent, "TOP"
   if Z.ApplyStickyPlacement then
     local stickyX, stickyY = Z.ApplyStickyPlacement(plate,now,x,y,uiScale,plateScale)
     if stickyX then
-      ox,oy=stickyX,stickyY+(tonumber(C.vertical_offset) or 0)
+      ox,oy=stickyX,stickyY+(render and render.verticalOffset or tonumber(C.vertical_offset) or 0)
       reference,referencePoint=UIParent,"BOTTOMLEFT"
     end
   end

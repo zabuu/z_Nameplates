@@ -137,8 +137,11 @@ end
 local function UpdateStickyPlacements(now, visible, shouldOverlap, targetGuid, hoverGuid)
   local C = Z.config.nameplates
   local enabled = C.sticky_placement == "1" and type(zAPI) == "function"
-  local ui = UIParent:GetEffectiveScale()
-  local uiWidth,uiHeight=UIParent:GetWidth(),UIParent:GetHeight()
+  local render=Z.plateRenderContext
+  if not render or not render.active or render.now~=now or render.ui~=UIParent then render=nil end
+  local ui = render and render.uiScale or UIParent:GetEffectiveScale()
+  local uiWidth=render and render.width or UIParent:GetWidth()
+  local uiHeight=render and render.height or UIParent:GetHeight()
   local bufferX=math.max(0,math.min(40,tonumber(C.collision_buffer_x) or 0))
   local bufferY=math.max(0,math.min(40,tonumber(C.collision_buffer_y) or 0))
   local petGuid=UnitExists and UnitGUID and UnitExists("pet") and UnitGUID("pet")
