@@ -330,23 +330,46 @@ function zNameplates.StartNameplates()
   end
 
   local function IsCombatWithPlayer(plate)
+    local render=zNameplates.plateRenderContext
+    if not render or not render.active then render=nil end
     local playerCombat
-    if zNameplates.GetPlayerCombatState then playerCombat = zNameplates.GetPlayerCombatState()
+    if zNameplates.GetPlayerCombatState then playerCombat = zNameplates.GetPlayerCombatState(render and render.now)
     else playerCombat = UnitAffectingCombat("player") end
     if not playerCombat then return nil end
     local token = plate and plate.unit
-    if not token or not UnitExists(token) or UnitCanAssist("player", token) or not UnitAffectingCombat(token) then return nil end
-    local threat = UnitThreatSituation and UnitThreatSituation("player", token)
-    if threat and threat > 0 then return true end
-    local target = token .. "target"
-    return UnitGUID(target) and UnitIsUnit(target, "player") or nil
+    if not token then return nil end
+    -- Overlap, name styling and font styling can request this same relation.
+    -- Share only within the current render; independent UI calls remain live.
+    local sample=render and plate.combatRelationSample
+    if sample and sample.serial==render.serial and sample.unit==token and sample.guid==plate.cachedGuid
+        and sample.exists==UnitExists and sample.assist==UnitCanAssist and sample.combat==UnitAffectingCombat
+        and sample.threat==UnitThreatSituation and sample.guidAPI==UnitGUID and sample.isUnit==UnitIsUnit then
+      return sample.value
+    end
+    local value
+    if UnitExists(token) and not UnitCanAssist("player",token) and UnitAffectingCombat(token) then
+      local threat=UnitThreatSituation and UnitThreatSituation("player",token)
+      if threat and threat>0 then value=true
+      else
+        local target=token.."target"
+        value=UnitGUID(target) and UnitIsUnit(target,"player") or nil
+      end
+    end
+    if render then
+      if not sample then sample={}; plate.combatRelationSample=sample end
+      sample.serial,sample.unit,sample.guid=render.serial,token,plate.cachedGuid
+      sample.exists,sample.assist,sample.combat=UnitExists,UnitCanAssist,UnitAffectingCombat
+      sample.threat,sample.guidAPI,sample.isUnit=UnitThreatSituation,UnitGUID,UnitIsUnit
+      sample.value=value
+    end
+    return value
   end
 
   local function ShouldOverlap(plate)
     local overlap = plate and plate.overlapEnabled
     if overlap == nil then overlap = cfg.overlap_enemy end
     if cfg.overlap_friendly_area and inFriendlyArea then overlap = true end
-    if IsCombatWithPlayer(plate) and (cfg.overlap_combat or (plate and plate.isNeutral)) then overlap = false end
+    if (cfg.overlap_combat or (plate and plate.isNeutral)) and IsCombatWithPlayer(plate) then overlap = false end
     return overlap
   end
 
@@ -812,15 +835,21 @@ function zNameplates.StartNameplates()
     if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
     if cfg.los_fade and cfg.distance_unitxp and plate.unit then
       local interval=plate.backgroundFriendly and .2 or .1
-      if plate.losSampleInterval~=interval or plate.losSampleAPI~=UnitXP then
+      if plate.losSampleInterval~=interval or plate.losSampleAPI~=UnitXP or plate.losSampleNative~=zAPI then
         plate.losNextSample=nil
         plate.losSampleInterval,plate.losSampleAPI=interval,UnitXP
+        plate.losSampleNative=zAPI
       end
       if not plate.losNextSample or now >= plate.losNextSample then
         -- Validation belongs to the 10 Hz raycast, not every rendered frame.
         -- Lifecycle/identity changes already reset this sample immediately.
         local found,inSight
-        if UnitExists(plate.unit) then found,inSight=pcall(UnitXP,"inSight","player",plate.unit) end
+        local prepared=zNameplates.GetPreparedPlateSight and zNameplates.GetPreparedPlateSight(plate,now)
+        if prepared==0 or prepared==1 then
+          found,inSight=true,prepared==1
+        elseif UnitExists(plate.unit) then
+          found,inSight=pcall(UnitXP,"inSight","player",plate.unit)
+        end
         plate.losOutOfSight = found and inSight == false or nil
         local phase = plate.losSamplePhase or 0
         local interval=plate.backgroundFriendly and .2 or .1
@@ -1499,6 +1528,9 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
       zNameplates.UpdateStickyPlacements(now, visiblePlates, ShouldOverlap, frameState.targetGuid, frameState.mouseoverGuid)
       if cost then zNameplates.EndPlateCost("zNP layout and projection",cost,generation,visiblePlateCount) end
       if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
+      if zNameplates.PreparePlateSight then zNameplates.PreparePlateSight(now,visiblePlates,frameState.targetGuid,frameState.mouseoverGuid) end
+      if cost then zNameplates.EndPlateCost("zNP sight preparation",cost,generation,visiblePlateCount) end
+      if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
       for plate in pairs(visiblePlates) do
         if plate:IsVisible() then nameplates.OnUpdate(plate, frameState, true) end
       end
@@ -1506,7 +1538,10 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
       if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
       UpdateNameplateDepthLayers()
       if cost then zNameplates.EndPlateCost("zNP depth ordering and layers",cost,generation,visiblePlateCount) end
-      if profileStart then zNameplates.EndPlateCost("zNP full frame",profileStart,profileGeneration,visiblePlateCount) end
+      if profileStart then
+        local finished=zNameplates.EndPlateCost("zNP full frame",profileStart,profileGeneration,visiblePlateCount)
+        if OctoPerf.RecordNameplateFrame then OctoPerf.RecordNameplateFrame(profileStart,finished,visiblePlateCount,zNameplates.plateProjectionVersion,profileGeneration) end
+      end
       zNameplates.platePerfActive=nil
       if zNameplates.EndPlateRender then zNameplates.EndPlateRender() end
       return
@@ -1553,6 +1588,9 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
     if zNameplates.PreparePlateProjections then zNameplates.PreparePlateProjections(now,visiblePlates) end
     zNameplates.UpdateStickyPlacements(now, visiblePlates, ShouldOverlap, frameState.targetGuid, frameState.mouseoverGuid)
     if cost then zNameplates.EndPlateCost("zNP layout and projection",cost,generation,visiblePlateCount) end
+    if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
+    if zNameplates.PreparePlateSight then zNameplates.PreparePlateSight(now,visiblePlates,frameState.targetGuid,frameState.mouseoverGuid) end
+    if cost then zNameplates.EndPlateCost("zNP sight preparation",cost,generation,visiblePlateCount) end
 
     if zNameplates.platePerfActive then cost,generation=zNameplates.BeginPlateCost() end
     for plate in pairs(visiblePlates) do
@@ -1565,7 +1603,10 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
     UpdateNameplateDepthLayers(this.depthDirty)
     this.depthDirty=nil
     if cost then zNameplates.EndPlateCost("zNP depth ordering and layers",cost,generation,visiblePlateCount) end
-    if profileStart then zNameplates.EndPlateCost("zNP full frame",profileStart,profileGeneration,visiblePlateCount) end
+    if profileStart then
+      local finished=zNameplates.EndPlateCost("zNP full frame",profileStart,profileGeneration,visiblePlateCount)
+      if OctoPerf.RecordNameplateFrame then OctoPerf.RecordNameplateFrame(profileStart,finished,visiblePlateCount,zNameplates.plateProjectionVersion,profileGeneration) end
+    end
     zNameplates.platePerfActive=nil
     if zNameplates.EndPlateRender then zNameplates.EndPlateRender() end
   end)
@@ -2398,6 +2439,18 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
     local nameplate = frame.nameplate
     local now = state and state.now or GetTime()
 
+    -- Layout still validates/projects this slot every render, so returning to
+    -- view is immediate. Once projection grace has expired, invisible overlays
+    -- need no raycasts or scale/layer work. Keep normal event/data processing
+    -- below (including ownership used by clustering), and refresh LOS on return.
+    if nameplate.worldPlacementHidden then
+      if nameplate.cachedAlpha ~= 0 then nameplate:SetAlpha(0); nameplate.cachedAlpha = 0 end
+      if nameplate.clusterCountFrame and nameplate.clusterCountFrame:GetAlpha() ~= 0 then
+        nameplate.clusterCountFrame:SetAlpha(0)
+      end
+      nameplate.losNextSample = nil
+    end
+
     -- cachedGuid is maintained by NAME_PLATE_UNIT_ADDED / _REMOVED events.
 
     -- PERF: Intelligent throttling based on target/castbar status and plate count
@@ -2420,9 +2473,11 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
     -- Size, opacity, and line-of-sight transitions run at the fast central
     -- cadence so movement remains continuous even when normal plate data is
     -- using the lower non-target update rate.
-    nameplate.backgroundFriendly=zNameplates.IsBackgroundFriendlyPlate
-      and zNameplates.IsBackgroundFriendlyPlate(nameplate,targetGuid,state and state.mouseoverGuid,now) or false
-    ApplyDistanceEffects(nameplate, now, baseAlpha)
+    if not nameplate.worldPlacementHidden then
+      nameplate.backgroundFriendly=zNameplates.IsBackgroundFriendlyPlate
+        and zNameplates.IsBackgroundFriendlyPlate(nameplate,targetGuid,state and state.mouseoverGuid,now) or false
+      ApplyDistanceEffects(nameplate, now, baseAlpha)
+    end
     if visualOnly then return end
     -- Target plate castbar runs on its own dedicated frame (nameplates.castbarFrame).
     -- For non-target plates with castbar active, use castbar throttle to ensure

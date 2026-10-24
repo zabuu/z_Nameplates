@@ -2,7 +2,7 @@
 ## Title: |cff33ffccz|rNameplates
 ## Author: zNameplates contributors; based on pfUI by Shagu
 ## Notes: Standalone nameplates extracted from pfUI/sfUI.
-## Version: 2.1.3
+## Version: 2.1.7
 ## OptionalDeps: SW_FixLogStrings
 ## SavedVariables: zNameplatesLegacyBridge, zNameplatesProfiles
 ## SavedVariablesPerCharacter: zNameplatesDB
@@ -11,6 +11,8 @@ core.lua
 options.lua
 layers.lua
 clusters.lua
+renderbatch.lua
+sight.lua
 sticky.lua
 nameplates.lua
 dummy.lua

@@ -260,8 +260,22 @@ function Z.StrSplit(delimiter, subject)
   return unpack(fields)
 end
 
+local colorParts, colorKeys, colorNext = {}, {}, 1
+local colorParser = Z.StrSplit
 function Z.GetStringColor(value)
-  return Z.StrSplit(",", value or "1,1,1,1")
+  value = value or "1,1,1,1"
+  if colorParser ~= Z.StrSplit then
+    colorParts, colorKeys, colorNext, colorParser = {}, {}, 1, Z.StrSplit
+  end
+  local parts = colorParts[value]
+  if not parts then
+    parts = { Z.StrSplit(",", value) }
+    local previous = colorKeys[colorNext]
+    if previous ~= nil then colorParts[previous] = nil end
+    colorParts[value], colorKeys[colorNext] = parts, value
+    colorNext = math.mod(colorNext, 64) + 1
+  end
+  return unpack(parts)
 end
 
 function Z.Round(value, places)
@@ -459,7 +473,7 @@ end
 function Z.EndPlateCost(label, started, generation, detail)
   if not started then return end
   if type(detail)=="number" then detail="visible="..tostring(detail) end
-  OctoPerf.EndOperation(label,started,generation,detail)
+  return OctoPerf.EndOperation(label,started,generation,detail)
 end
 
 -- These values are common to every plate in one central render pass. Keep the
@@ -542,6 +556,7 @@ function Z.PreparePlateProjections(now,visible)
   local render=Z.plateRenderContext
   if not render or not render.active or render.now~=now or type(zAPI)~="function" then return end
   if Z.GetPlateProjectionCommand()~="projectNameplate" or Z.plateProjectionVersion<2.8 then return end
+  if Z.PrepareValidatedPlateProjections and Z.PrepareValidatedPlateProjections(now,visible) then return end
   if Z.plateBatchAPI~=zAPI then
     Z.plateBatchAPI=zAPI
     local ok,version=pcall(zAPI,"nameplateBatchVersion")

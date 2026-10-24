@@ -187,7 +187,52 @@ root/strata changes repair immediately, text drift retains its fast guard, and
 phased half-second full audits catch unexpected child-only modifications.
 Per-frame unit validation reuses each plate's record instead of allocating a new
 table every frame; identity checks and recycled-frame safety are unchanged.
-No character settings, visibility rules, nameplate range, or DLL are changed.
+No character settings, visibility rules or nameplate range are changed.
+
+Version 2.1.4 skips visual work for world-owned overlays after their existing
+projection grace expires: no invisible LOS samples, distance animation or layer
+repairs. Live projection and ordinary event/data refreshes continue, including
+tap ownership used by clustering. Returning plates resume on the next render
+with a fresh LOS sample. Overlap-allowed labels also skip unused collision-scale
+reads, and settled placement skips elapsed-time integration setup.
+zAPI 2.9 speeds up the existing projection batch by sharing successful Windows
+memory-region checks only during its native computation phase. Unit/model data
+is still read live, with no page views retained across Lua input/output or frames.
+The native change requires a full client restart; the Lua changes work with older
+DLLs too. Offline fixtures verify reduced work; live FPS needs a new capture.
+
+Version 2.1.5 uses zAPI 3.0's optional batched LOS queries for due real plates.
+It shares the player's position/height read and replaces repeated UnitXP bridge
+calls with private reusable buffers. UnitXP's shorter-height ray, second head
+ray, collision mask, distance guard and 100–160 ms cache-age range are retained;
+cache dither is deterministic per GUID. The native cache has 512 fixed slots and
+stores no object pointers. Hidden/stale/cluster-hidden units and previews are
+excluded. Existing 10 Hz / background-friendly 5 Hz dispatch, immediate sampler
+upgrades on interaction, render-rate fades and anchors remain. Missing/unknown
+native results or an older DLL use the existing UnitXP provider.
+
+Version 2.1.6 uses zAPI 3.1's combined live validation/projection batch. Each
+render checks the token's current GUID and both directions of its native frame
+association, then projects from that same unit lookup. The shared validation
+record replaces per-plate UnitExists, UnitGUID and GetNamePlateForUnit calls in
+the regular and fast visual render paths. A 50-plate fixture eliminates 150 Lua
+bridge calls per render while retaining current camera/model reads. Stale slots
+fail immediately; current units with temporarily missing models retain the
+existing projection grace. The batch is capped at 512, reuses private buffers,
+and falls back to Lua validation with older DLLs or failed calls. This is an
+offline work reduction; a new capture after a full client restart is needed to
+measure the live gain.
+
+OctoPerf 1.7.2 records the loaded zAPI/addon versions and separate timing totals
+for frames with native plates present and empty scenes, plus at most 600
+one-second windows. These describe observed plate presence; toggle flags and
+mixed-toggle seconds are saved alongside them. Existing endpoints are reused
+without new timing reads. World transitions and new recordings reset interval
+tracking. `zNP sight preparation` includes the native LOS batch, so account for
+that stage when comparing LOS work with older captures.
+OctoPerf 1.7.3 also saves bounded first/latest native LOS and validation counters
+once per observed second, so subsequent captures can separate rays/cache hits
+and confirm the combined path ran.
 
 Interface click protection uses the client's constant-time top mouse focus,
 not a full UI-frame scan every rendered frame. Only ambiguous plate hovers

@@ -196,11 +196,16 @@ local function UpdateStickyPlacements(now, visible, shouldOverlap, targetGuid, h
         plate.worldPlacementHidden=nil
         s.sx, s.sy, s.last = sx, sy, now
         s.plate = plate
-        local scale = plate:GetEffectiveScale()/ui
-        if not s.contentW or (s.avoidance and now>=nextSolve) then
-          s.contentW,s.contentH,s.cx,s.cy=Measure(plate,ui)
+        -- Overlap-allowed labels only need their live anchor. Their collision
+        -- dimensions are unused until avoidance resumes; avoid a native scale
+        -- read and rebuilding the same bounds on every intervening render.
+        if s.avoidance or not s.contentW then
+          local scale = plate:GetEffectiveScale()/ui
+          if not s.contentW or now>=nextSolve then
+            s.contentW,s.contentH,s.cx,s.cy=Measure(plate,ui)
+          end
+          s.w,s.h=s.contentW+bufferX*2*scale,s.contentH+bufferY*2*scale
         end
-        s.w,s.h=s.contentW+bufferX*2*scale,s.contentH+bufferY*2*scale
         s.priority = identity==targetGuid or identity==hoverGuid
         s.hovered=C.sticky_hover_protection~="0" and (plate.layoutHoverReceiver~=nil or
           (plate.layoutHoverUntil and now<plate.layoutHoverUntil)) or false
@@ -348,11 +353,12 @@ end
 function Z.ApplyStickyPlacement(plate,now,nativeX,nativeY,uiScale,plateScale)
   local s=plate.stickyPlacement
   if not s then return end
-  local elapsed=math.max(0,math.min(.05,now-(s.renderTime or now)))
+  local previousTime=s.renderTime or now
   s.renderTime=now
   if s.hovered and s.avoidance and not s.returningHome then
     s.vx,s.vy=0,0
   elseif s.displayX~=s.dx or s.displayY~=s.dy or (s.vx or 0)~=0 or (s.vy or 0)~=0 then
+    local elapsed=math.max(0,math.min(.05,now-previousTime))
     local duration=math.max(.1,math.min(.6,tonumber(Z.config.nameplates.sticky_motion_duration) or .22))
     local speed=math.max(40,math.min(400,tonumber(Z.config.nameplates.sticky_motion_speed) or 140))
     if s.returningHome and s.hovered then speed=speed*.4 end
