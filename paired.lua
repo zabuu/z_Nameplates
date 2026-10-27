@@ -29,7 +29,7 @@ function Z.UpdatePairedVitals(visible)
     end
     -- GetEffectiveScale maps UI coordinates directly to framebuffer pixels.
     local pixel=1/math.max(.01,f:GetEffectiveScale())
-    local width=math.max(12,plate.name:GetStringWidth() or 0)+8*pixel
+    local width=(math.max(12,plate.name:GetStringWidth() or 0)+8*pixel)*.7
     f:ClearAllPoints();f:SetPoint("TOP",plate.name,"BOTTOM",0,-2*pixel);f:SetWidth(width);f:SetHeight(5*pixel)
     f.health:ClearAllPoints();f.health:SetPoint("TOPLEFT",f,"TOPLEFT",0,0);f.health:SetWidth(width);f.health:SetHeight(2*pixel)
     f.power:ClearAllPoints();f.power:SetPoint("TOPLEFT",f.health,"BOTTOMLEFT",0,-pixel);f.power:SetWidth(width);f.power:SetHeight(2*pixel)

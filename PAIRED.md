@@ -2,8 +2,9 @@
 
 With zBox 0.9.0, each authorized connected follower can show two thin bars
 beneath its existing friendly nameplate name: green health and resource-colored
-power. Each bar is exactly 2 framebuffer pixels high; width is the name width
-plus 8 pixels, with a 1-pixel gap and no labels or border. Existing nameplate
+power. Each bar is exactly 2 framebuffer pixels high. Version 2.2.1 uses 70%
+of the original width (name width plus 8 pixels), centered under the name,
+with a 1-pixel gap and no labels or border. Existing nameplate
 visibility and settings are preserved. Stale data, disconnect, revoked pairing
 or plate reuse hides the bars.
 

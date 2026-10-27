@@ -2,7 +2,7 @@
 ## Title: |cff33ffccz|rNameplates
 ## Author: zNameplates contributors; based on pfUI by Shagu
 ## Notes: Standalone nameplates extracted from pfUI/sfUI.
-## Version: 2.2.0
+## Version: 2.2.1
 ## OptionalDeps: SW_FixLogStrings
 ## SavedVariables: zNameplatesLegacyBridge, zNameplatesProfiles
 ## SavedVariablesPerCharacter: zNameplatesDB
