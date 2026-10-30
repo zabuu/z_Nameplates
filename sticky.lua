@@ -37,6 +37,24 @@ function Z.SetPlateLayoutHover(plate,receiver,enter,hidden)
   end
 end
 
+local function IncludeBounds(plate,object,ui,x,top,left,right,bottom,upper)
+  if not object or not object.GetLeft or not object.GetRight or not object.GetTop or not object.GetBottom
+      or (object.IsShown and not object:IsShown()) then return left,right,bottom,upper end
+  if (object.IsVisible and not object:IsVisible()) or (object.GetAlpha and object:GetAlpha()==0) then return left,right,bottom,upper end
+  if object.GetText then local text=object:GetText(); if not text or text=="" then return left,right,bottom,upper end end
+  local l,r,t,b=object:GetLeft(),object:GetRight(),object:GetTop(),object:GetBottom()
+  if not l or not r or not t or not b then return left,right,bottom,upper end
+  -- FontStrings/Textures inherit their owner's coordinate scale.
+  local owner=object.GetParent and object:GetParent()
+  if owner and owner.GetAlpha and owner:GetAlpha()==0 then return left,right,bottom,upper end
+  local effective=object.GetEffectiveScale and object:GetEffectiveScale()
+    or owner and owner.GetEffectiveScale and owner:GetEffectiveScale()
+    or plate:GetEffectiveScale()
+  local k=effective/ui
+  l,r,t,b=l*k-x,r*k-x,t*k-top,b*k-top
+  return math.min(left or l,l),math.max(right or r,r),math.min(bottom or b,b),math.max(upper or t,t)
+end
+
 local function Measure(plate,ui)
   -- Measure visible regions, not the legacy width+50 collision placeholder.
   local x,y=plate.GetCenter and plate:GetCenter()
@@ -45,31 +63,18 @@ local function Measure(plate,ui)
   local left,right,bottom,upper
   if x and top then
     x,top=x*scale,top*scale
-    local function Include(object)
-      if not object or not object.GetLeft or not object.GetRight or not object.GetTop or not object.GetBottom
-          or (object.IsShown and not object:IsShown()) then return end
-      if (object.IsVisible and not object:IsVisible()) or (object.GetAlpha and object:GetAlpha()==0) then return end
-      if object.GetText then local text=object:GetText(); if not text or text=="" then return end end
-      local l,r,t,b=object:GetLeft(),object:GetRight(),object:GetTop(),object:GetBottom()
-      if not l or not r or not t or not b then return end
-      -- FontStrings/Textures are Regions, not Frames: on 1.12 they do not
-      -- expose GetEffectiveScale. Their coordinates belong to their parent
-      -- frame, including the quarter-scale smooth-font surface. Falling back
-      -- to the whole plate scale made those boxes four times too large.
-      local owner=object.GetParent and object:GetParent()
-      if owner and owner.GetAlpha and owner:GetAlpha()==0 then return end
-      local effective=object.GetEffectiveScale and object:GetEffectiveScale()
-        or owner and owner.GetEffectiveScale and owner:GetEffectiveScale()
-        or plate:GetEffectiveScale()
-      local k=effective/ui
-      l,r,t,b=l*k-x,r*k-x,t*k-top,b*k-top
-      left=math.min(left or l,l); right=math.max(right or r,r)
-      bottom=math.min(bottom or b,b); upper=math.max(upper or t,t)
+    left,right,bottom,upper=IncludeBounds(plate,plate.health,ui,x,top,left,right,bottom,upper)
+    left,right,bottom,upper=IncludeBounds(plate,plate.name,ui,x,top,left,right,bottom,upper)
+    left,right,bottom,upper=IncludeBounds(plate,plate.level,ui,x,top,left,right,bottom,upper)
+    left,right,bottom,upper=IncludeBounds(plate,plate.guild,ui,x,top,left,right,bottom,upper)
+    left,right,bottom,upper=IncludeBounds(plate,plate.castbar,ui,x,top,left,right,bottom,upper)
+    left,right,bottom,upper=IncludeBounds(plate,plate.clusterDebuffLabel,ui,x,top,left,right,bottom,upper)
+    left,right,bottom,upper=IncludeBounds(plate,plate.raidicon,ui,x,top,left,right,bottom,upper)
+    if plate.debuffs then
+      for _,aura in ipairs(plate.debuffs) do
+        left,right,bottom,upper=IncludeBounds(plate,aura,ui,x,top,left,right,bottom,upper)
+      end
     end
-    Include(plate.health); Include(plate.name); Include(plate.level); Include(plate.guild)
-    Include(plate.castbar); Include(plate.clusterDebuffLabel)
-    Include(plate.raidicon)
-    for _,aura in ipairs(plate.debuffs or {}) do Include(aura) end
   end
   if left then return math.max(20,right-left),math.max(14,upper-bottom),(right+left)*.5,(upper+bottom)*.5 end
   local bar=plate.health
@@ -95,6 +100,14 @@ local function Penalty(s,dx,dy,count)
   -- each frame from scratch. Sideways relocation costs more than vertical.
   return penalty+dx*dx*1.4+dy*dy*.35+
     ((dx-s.dx)^2+(dy-s.dy)^2)*(s.priority and .25 or .12)
+end
+
+local function TryCandidate(s,dx,dy,maximum,bestX,bestY,best,count)
+  if math.abs(dx)<=maximum*.6 and dy>=0 and dy<=maximum then
+    local value=Penalty(s,dx,dy,count)
+    if value<best-4 then return dx,dy,value end
+  end
+  return bestX,bestY,best
 end
 
 local function HideLink(plate)
@@ -296,24 +309,22 @@ local function UpdateStickyPlacements(now, visible, shouldOverlap, targetGuid, h
     elseif not s.hovered and (not obstructed or now-(s.collisionSince or now)>=delay) then
       local bestX,bestY=s.dx,s.dy
       local best=Penalty(s,bestX,bestY,count)
-      local function Try(dx,dy)
-        if math.abs(dx)>maximum*.6 or dy<0 or dy>maximum then return end
-        local value=Penalty(s,dx,dy,count)
-        if value<best-4 then bestX,bestY,best=dx,dy,value end
-      end
-      Try(0,0)
+      bestX,bestY,best=TryCandidate(s,0,0,maximum,bestX,bestY,best,count)
       -- Small steps toward home let labels reclaim space continuously.
-      Try(s.dx*.8,s.dy*.8)
+      bestX,bestY,best=TryCandidate(s,s.dx*.8,s.dy*.8,maximum,bestX,bestY,best,count)
       local step=math.max(12,s.h+2)
       local side=math.min(maximum*.6,s.w*.4+(tonumber(C.sticky_column_gap) or 6))
       for row=0,math.min(6,math.ceil(maximum/step)) do
-        Try(0,row*step); Try(side,row*step); Try(-side,row*step)
+        bestX,bestY,best=TryCandidate(s,0,row*step,maximum,bestX,bestY,best,count)
+        bestX,bestY,best=TryCandidate(s,side,row*step,maximum,bestX,bestY,best,count)
+        bestX,bestY,best=TryCandidate(s,-side,row*step,maximum,bestX,bestY,best,count)
       end
       -- Contact candidates are exact local resolutions, not global columns.
       for _,other in ipairs(nearby) do
         if other~=s and math.abs(s.baseX-other.x)<(s.w+other.w)*.5+maximum*.6 then
           local above=other.y+(s.h+other.h)*.5+2-s.baseY-s.cy
-          Try(s.dx,above); Try(0,above)
+          bestX,bestY,best=TryCandidate(s,s.dx,above,maximum,bestX,bestY,best,count)
+          bestX,bestY,best=TryCandidate(s,0,above,maximum,bestX,bestY,best,count)
         end
       end
       s.dx,s.dy=bestX,bestY

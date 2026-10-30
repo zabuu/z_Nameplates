@@ -223,6 +223,22 @@ and falls back to Lua validation with older DLLs or failed calls. This is an
 offline work reduction; a new capture after a full client restart is needed to
 measure the live gain.
 
+Version 2.1.7 shares each plate's combat/threat relation among overlap, neutral
+and font styling consumers within the current render. New renders still sample
+live state, including at the same clock timestamp; token/GUID or provider
+changes invalidate the record. Independent UI calls remain live. A 50-plate,
+three-consumer fixture reduces unit API reads from 750 to 250 and clock reads
+from 150 to zero. Non-neutral plates also skip the relation query when combat
+overlap is disabled. This changes no combat cadence, collision policy, motion
+or visibility settings and requires no new DLL.
+
+Version 2.1.8 removes temporary bound-measurement and candidate-search closures
+from the avoidance solver. The same glyph/aura bounds, candidates, priorities
+and damping are retained. A 240-frame/24-plate replay matches the previous
+layout exactly; 10,000 visible-bound measurements allocate 0 KiB of temporary
+Lua storage after warmup versus about 4 MiB previously in the fixture. This
+reduces garbage pressure without changing collection thresholds or policies.
+
 OctoPerf 1.7.2 records the loaded zAPI/addon versions and separate timing totals
 for frames with native plates present and empty scenes, plus at most 600
 one-second windows. These describe observed plate presence; toggle flags and
