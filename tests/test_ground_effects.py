@@ -84,7 +84,7 @@ groundEvent("SPELL_GO_SELF",0,1543,"0x01"); groundTick(4)
 r=Z.groundEffectRecords[1]
 assert(r.frame==frame and r.x==70 and r.y==80 and r.expires==34)
 assert(string.find(frame.icon.texture,"Flare"))
--- Ground icons use the same WorldFrame -> UIParent mapping as real plates.
+-- Ground icons use normalized screen coordinates, like real plates.
 -- Icon scale is independent: changing either scale cannot move the anchor.
 for _,ui in ipairs({.64,.8,.9,1,1.1}) do
  for _,world in ipairs({.8,1}) do
@@ -92,15 +92,15 @@ for _,ui in ipairs({.64,.8,.9,1,1.1}) do
    UIParent:SetScale(ui); WorldFrame:SetScale(world); Z.config.groundeffects.scale=tostring(icon)
    groundTick(clock+.00001)
    assert(frame:IsShown())
-   assert(math.abs(frame.point[4]-projectionX*world/ui*UIParent:GetWidth()/icon)<.000001)
-   assert(math.abs(frame.point[5]-projectionY*world/ui*UIParent:GetHeight()/icon)<.000001)
+   assert(math.abs(frame.point[4]-projectionX*UIParent:GetWidth()/icon)<.000001)
+   assert(math.abs(frame.point[5]-projectionY*UIParent:GetHeight()/icon)<.000001)
   end
  end
 end
--- Clip after normalization, not against the raw WorldFrame range.
-UIParent:SetScale(.8); WorldFrame:SetScale(1); projectionX=.81
+-- Clip in the normalized screen range regardless of UI or WorldFrame scale.
+UIParent:SetScale(.8); WorldFrame:SetScale(1); projectionX=1.01
 groundTick(clock+.00001); assert(not frame:IsShown())
-projectionX=.79; groundTick(clock+.00001); assert(frame:IsShown())
+projectionX=.99; groundTick(clock+.00001); assert(frame:IsShown())
 UIParent:SetScale(1); projectionX=.5; Z.config.groundeffects.scale="1"
 groundTick(clock+.00001)
 local before=fontWrites; local beforeStates=states; local beforeScans=scans

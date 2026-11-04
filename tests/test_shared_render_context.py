@@ -63,7 +63,7 @@ end
 '''
 
 
-def runtime(folder):
+def runtime(folder, normalized=False):
     core = source(folder, "core.lua")
     plates = source(folder, "nameplates.lua")
     lua = LuaRuntime(unpack_returned_tuples=True)
@@ -71,6 +71,8 @@ def runtime(folder):
     start = "function Z.BeginPlateRender(" if "function Z.BeginPlateRender(" in core else "function Z.GetPlateProjection("
     lua.execute("local Z=Z\n" + core[core.index(start):core.index("function Z.SuppressNativePlateVisuals(")])
     lua.execute("local Z=Z\n" + core[core.index("function Z.UpdatePlateTransition("):core.index("Z.throttle = {}")])
+    if normalized:
+        lua.execute("Z.NormalizeWorldProjection=function(x,y) return x,y end")
     visual = plates[plates.index("  local function ApplyDistanceEffects("):plates.index("  local function RefreshVisibleNameplatePool(")]
     lua.execute(visual + "\nvisualPass=ApplyDistanceEffects")
     lua.execute(r'''
@@ -91,16 +93,18 @@ new, new_plates = runtime(ROOT)
 before, after = dict(old.globals().counts.items()), dict(new.globals().counts.items())
 assert before["baseScale"] == 50 and after["baseScale"] == 1
 assert before["uiScale"] == 150 and after["uiScale"] == 1, (before, after)
-assert before["worldScale"] == 100 and after["worldScale"] == 1, (before, after)
+assert before["worldScale"] == 100 and after.get("worldScale", 0) == 0, (before, after)
 assert before["projection"] == after["projection"] == 50
 assert before["guid"] == after["guid"] == 50  # Current-frame lifecycle validation remains.
-print("50 plates: shared base/effective-scale reads 300 -> 3; all 50 projections and unit validations retained.")
+print("50 plates: shared base/effective-scale reads 300 -> 2; all 50 projections and unit validations retained.")
 
 
 def snapshot(lua):
     return [tuple(lua.globals().pack[i][k] for k in ("x", "y", "scale", "alpha", "appearanceAlpha")) for i in range(1, 51)]
 
 
+# Compare other rendering behavior with the corrected normalized-coordinate contract.
+old, _ = runtime(BASE, normalized=True)
 assert snapshot(old) == snapshot(new)
 for script in [
     "camera=.01; render(1.01)",
@@ -119,7 +123,7 @@ new.execute(r'''
 assert(not Z.plateRenderContext.active)
 uiScale=.5
 local x,y=Z.GetPlateProjection(pack[2],clock)
-assert(math.abs(x-(.5+camera)/.5)<.000001 and math.abs(y-.6/.5)<.000001)
+assert(math.abs(x-(.5+camera))<.000001 and math.abs(y-.6)<.000001)
 local saved=Z.plateRenderContext
 Z.BeginPlateRender(clock); Z.EndPlateRender()
 assert(Z.plateRenderContext==saved) -- One reused record, not one new table per frame.

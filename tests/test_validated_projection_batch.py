@@ -52,7 +52,7 @@ function render(t)
    local x,y,d,wx,wy,wz=Z.GetPlateProjection(p,t)
    local a,b,c,e,f,g=result(p.cachedGuid)
    if gap[p.cachedGuid] then assert(x==nil and d==nil)
-   else assert(math.abs(x-a/ui)<1e-9 and math.abs(y-b/ui)<1e-9)
+   else assert(math.abs(x-a)<1e-9 and math.abs(y-b)<1e-9)
     assert(d==c and wx==e and wy==f and wz==g) end
   end
  end

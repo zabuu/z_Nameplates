@@ -28,11 +28,11 @@ zAPI=function(command,guid,offset)
  return .5,.3,16,10,20,2
 end
 ''')
-lua.execute('local Z=Z\n' + core[core.index("function Z.GetPlateProjection("):core.index("-- zAPI projects in the native WorldFrame")])
+lua.execute('local Z=Z\n' + core[core.index("function Z.GetPlateProjection("):core.index("-- zAPI returns normalized screen coordinates")])
 lua.execute('local Z=Z\n' + core[core.index("function Z.NormalizeWorldProjection("):core.index("function Z.GetPlayerWorldPosition(")])
 lua.execute('''
 local x,y,d,wx,wy,wz=Z.GetPlateProjection(plate,0)
-assert(math.abs(x-.6/.9)<.000001 and math.abs(y-.7/.9)<.000001)
+assert(math.abs(x-.6)<.000001 and math.abs(y-.7)<.000001)
 assert(d==15 and wx==10 and wy==20 and wz==4.6666667)
 assert(plate.projectionSample.command=="projectNameplate")
 Z.GetPlateProjection(plate,0)
@@ -42,7 +42,7 @@ assert(versionReads==1 and nameReads==1 and collisionReads==0)
 for i=1,100 do
  cameraX=.6-i*.001; cameraY=.7-i*.001; clock=i*.01
  x,y=Z.GetPlateProjection(plate,clock)
- assert(math.abs(x-cameraX/uiScale)<.000001 and math.abs(y-cameraY/uiScale)<.000001)
+ assert(math.abs(x-cameraX)<.000001 and math.abs(y-cameraY)<.000001)
 end
 assert(versionReads==1 and nameReads==101 and collisionReads==0)
 -- A model-not-ready/hidden attachment is a real gap. Do not fall to a lower
@@ -53,17 +53,17 @@ assert(Z.GetPlateProjection(plate,clock)==nil)
 assert(nameReads==102 and collisionReads==0)
 modelReady=true; clock=2.1
 x,y=Z.GetPlateProjection(plate,clock)
-assert(math.abs(y-cameraY/uiScale)<.000001)
--- UI scale conversion is live even when this frame's native result is cached.
+assert(math.abs(y-cameraY)<.000001)
+-- UIParent dimensions handle UI scaling; normalized cached results stay unchanged.
 uiScale=.8
 x,y=Z.GetPlateProjection(plate,clock)
-assert(math.abs(y-cameraY/.8)<.000001 and nameReads==103)
+assert(math.abs(y-cameraY)<.000001 and nameReads==103)
 -- Older installed DLLs remain usable without making unsupported calls every
 -- frame. Replacing the API invalidates both capability and projection caches.
 local previous=zAPI
 apiVersion=1.8; zAPI=function(...) return previous(...) end
 x,y=Z.GetPlateProjection(plate,clock)
-assert(x==.625 and math.abs(y-.375)<.000001)
+assert(x==.5 and math.abs(y-.3)<.000001)
 assert(plate.projectionSample.command=="projectUnit" and versionReads==2 and collisionReads==1)
 Z.GetPlateProjection(plate,clock)
 assert(versionReads==2 and collisionReads==1)

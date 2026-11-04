@@ -483,15 +483,12 @@ function Z.BeginPlateRender(now)
   local state=Z.plateRenderContext
   if not state then state={}; Z.plateRenderContext=state end
   local C=Z.config.nameplates
-  state.now,state.active,state.ui,state.world=now,true,UIParent,WorldFrame
+  state.now,state.active,state.ui=now,true,UIParent
   state.serial=(state.serial or 0)+1
   state.baseScale=UIParent:GetScale()
   state.uiScale=UIParent.GetEffectiveScale and UIParent:GetEffectiveScale() or 1
-  state.worldScale=WorldFrame and WorldFrame.GetEffectiveScale and WorldFrame:GetEffectiveScale() or nil
   state.width=UIParent.GetWidth and UIParent:GetWidth() or nil
   state.height=UIParent.GetHeight and UIParent:GetHeight() or nil
-  state.projectionFactor=state.worldScale and state.uiScale>0 and state.worldScale>0
-    and state.worldScale/state.uiScale or 1
   state.transitionDuration=math.max(.05,math.min(.5,tonumber(C.transition_duration) or .12))
   state.smoothTransitions=C.smooth_transitions=="1"
   state.verticalOffset=tonumber(C.vertical_offset) or 0
@@ -645,20 +642,11 @@ function Z.ReleasePlateNativeCollision(plate)
   if not parent.IsMouseEnabled or parent:IsMouseEnabled() then parent:EnableMouse(false) end
 end
 
--- zAPI projects in the native WorldFrame's coordinate space. UIParent may
--- use a different UI scale; treating those spaces as identical shifts every
--- projected anchor toward the screen origin (especially obvious at 0.9 UI).
-function Z.NormalizeWorldProjection(x,y,now)
-  if type(x)~="number" or type(y)~="number" then return x,y end
-  local render=Z.plateRenderContext
-  if render and render.active and render.now==now and render.ui==UIParent and render.world==WorldFrame then
-    return x*render.projectionFactor,y*render.projectionFactor
-  end
-  if not WorldFrame or not WorldFrame.GetEffectiveScale or not UIParent or not UIParent.GetEffectiveScale then return x,y end
-  local ui,world=UIParent:GetEffectiveScale(),WorldFrame:GetEffectiveScale()
-  if not ui or not world or ui<=0 or world<=0 then return x,y end
-  local factor=world/ui
-  return x*factor,y*factor
+-- zAPI returns normalized screen coordinates. Callers map them through
+-- UIParent's dimensions, which already account for its UI scale. Applying
+-- WorldFrame/UIParent scale here a second time displaces every anchor.
+function Z.NormalizeWorldProjection(x,y)
+  return x,y
 end
 
 function Z.GetPlayerWorldPosition(now)

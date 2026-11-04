@@ -38,7 +38,9 @@ immediately. The displacement limit, smoothing, speed and hover protection are
 adjustable. Hover pauses layout relocation and holds briefly after departure;
 displaced selected/hovered plates can show a subtle dotted anchor connection.
 All world-owned plates use the projected nameplate anchor plus the configured
-vertical offset. With zAPI 1.9+, that anchor is the client's model name
+vertical offset. Normalized zAPI coordinates map directly through UIParent's
+dimensions; no additional WorldFrame/UIParent scale multiplier is applied.
+With zAPI 1.9+, that anchor is the client's model name
 attachment plus its native clearance, taken before Blizzard's collision
 layout. This restores the original height without capturing an already-pushed
 frame, applying a manual lift, or reseeding it on combat/toggle changes. Older
