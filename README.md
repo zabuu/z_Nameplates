@@ -6,6 +6,13 @@ included.
 
 ## Setup
 
+Download or clone this repository into `Interface/AddOns/z_Nameplates`.
+Install **[zAPI.dll](https://github.com/zabuu/zAPI#installation)** separately for
+native projection, sight batches and ground effects. Follow its guide for the
+DLL download, placement beside `WoW.exe`, `dlls.txt` and a full restart.
+Git/addon-manager installation does not install this shared native dependency.
+Existing older-DLL and non-native fallbacks remain available.
+
 1. Enable `zNameplates` in the addon list.
 2. Turn off the pfUI nameplate module if pfUI is enabled. Only one addon should
    own Blizzard nameplates at a time.
@@ -420,8 +427,8 @@ The optional recorder labels the new native operation `zNP native anchor batch`.
 
 Pre-change source snapshots are saved locally in both addon repositories as
 `backup/pre-projection-batch-2026-10-18` (including the already-pending edits).
-The zDNumbers snapshot also stores the exact pre-change game-root DLL at Git path
-`native/zAPI/checkpoints/zAPI-installed-pre-projection-batch-2026-10-18.dll`.
+The historical zDNumbers backup branch also stores the pre-change game-root DLL.
+Current native source and downloads now live in [zAPI](https://github.com/zabuu/zAPI).
 No profiles or saved settings were changed. Fully restart WoW for zAPI 2.8, then
 compare stationary and camera-moving town scenes from the same location. `/reload`
 alone cannot replace the native DLL already loaded into the client.
