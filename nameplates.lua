@@ -2258,7 +2258,11 @@ nameplates:RegisterEvent("PLAYER_REGEN_ENABLED")
       r, g, b, a = PFUI_CLASS_COLORS[class]:GetRGBA()
     end
 
-    if cfg.barcombatstate then
+    -- Threat/casting/stun bar colours are PvE signals. Player plates keep
+    -- their class (or reaction) colour, so battleground enemies don't get
+    -- repainted as soon as everyone is in combat.
+    local isPlayerPlate = unittype == "ENEMY_PLAYER" or unittype == "FRIENDLY_PLAYER"
+    if cfg.barcombatstate and not isPlayerPlate then
       local guid = plate.cachedGuid or ""
       local color = GetCombatStateColor(guid, plate.unit)
 
